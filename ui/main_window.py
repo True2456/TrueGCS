@@ -68,6 +68,15 @@ class GCSMainWindow(QMainWindow):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(10, 10, 10, 10)
 
+        self.combo_target_drone = QComboBox()
+        self.combo_target_drone.setFixedWidth(220)
+        self.combo_target_drone.addItem("No Drones Detected", userData=None)
+        self.combo_target_drone.setStyleSheet("font-weight: bold; color: #00ddff;")
+
+        self.btn_disconnect_node = QPushButton("Disconnect Node")
+        self.btn_disconnect_node.setStyleSheet("background-color: rgba(255, 50, 50, 0.15); border: 1px solid #ff3232; color: #ffffff;")
+        self.btn_disconnect_node.setFixedWidth(130)
+
         self.combo_type = QComboBox()
         ports = serial.tools.list_ports.comports()
         for port in ports:
@@ -86,25 +95,37 @@ class GCSMainWindow(QMainWindow):
         self.lbl_p2.hide()
         self.txt_p2.hide()
 
-        self.btn_connect = QPushButton("Connect")
+        # Phase 1.9: Connection UI Sync (Force initial state to match combo selection)
+        self.on_connection_type_changed()
+
+        self.btn_add_node = QPushButton("+ Add Node")
+        self.btn_add_node.setStyleSheet("background-color: rgba(0, 221, 255, 0.15); border: 1px solid #00ddff; color: #ffffff;")
         
         self.combo_mode = QComboBox()
         self.combo_mode.setFixedWidth(110)
         self.combo_mode.hide()
         self.combo_mode.currentTextChanged.connect(self.on_mode_selected)
         
-        self.lbl_status = QLabel("MAVLink: Disconnected")
-        self.lbl_status.setStyleSheet("color: red; font-size: 14px;")
+        self.lbl_status = QLabel("Ready")
+        self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 14px;")
 
-        layout.addWidget(QLabel("Interface:"))
+        layout.addWidget(QLabel("ACTIVE TARGET:"))
+        layout.addWidget(self.combo_target_drone)
+        layout.addWidget(self.btn_disconnect_node)
+        layout.addSpacing(10)
+        layout.addWidget(QLabel("  FLIGHT MODE:"))
+        layout.addWidget(self.combo_mode)
+        
+        layout.addStretch()
+        
+        layout.addWidget(QLabel("NEW NODE:"))
         layout.addWidget(self.combo_type)
         layout.addWidget(self.lbl_p1)
         layout.addWidget(self.txt_p1)
         layout.addWidget(self.lbl_p2)
         layout.addWidget(self.txt_p2)
-        layout.addWidget(self.btn_connect)
-        layout.addWidget(self.combo_mode)
-        layout.addStretch()
+        layout.addWidget(self.btn_add_node)
+        layout.addSpacing(15)
         layout.addWidget(self.lbl_status)
         
         return bar
@@ -182,12 +203,12 @@ class GCSMainWindow(QMainWindow):
         self.combo_mode.blockSignals(False)
 
     def on_mode_selected(self, mode):
-        if self.telemetry:
-            self.telemetry.set_flight_mode(mode)
+        # We will dynamically grab the active drone from the core manager, 
+        # so this UI just emits the intent to change mode
+        pass
 
     def closeEvent(self, event):
-        if self.telemetry:
-            self.telemetry.stop()
+        # The main.py will handle shutting down all telemetry nodes when app exits
         if self.video_thread:
             self.video_thread.stop()
         event.accept()

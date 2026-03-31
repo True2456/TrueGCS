@@ -15,9 +15,9 @@ class HUDLabel(QFrame):
                 border-bottom: 1px solid rgba(0, 221, 255, 0.1);
             }
         """)
-        self.setMinimumWidth(80) # Prevent micro-layout shifts
+        self.setFixedWidth(110) # Enforce a tight, consistent width for all HUD blocks
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(0)
 
         self.lbl_title = QLabel(label.upper())
@@ -30,6 +30,7 @@ class HUDLabel(QFrame):
         self.lbl_unit.setStyleSheet("color: #00ddff; font-size: 9px;")
 
         h_lay = QHBoxLayout()
+        h_lay.setSpacing(4)
         h_lay.addWidget(self.lbl_value)
         h_lay.addWidget(self.lbl_unit)
         h_lay.addStretch()
@@ -100,31 +101,31 @@ class MapHUD(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         
-        # Top Row: Coordinates & Mode
+        # Top Row: Lat, Lon, Mode (Aligned Left)
         top_row = QHBoxLayout()
         self.hud_lat = HUDLabel("Latitude")
         self.hud_lon = HUDLabel("Longitude")
         self.hud_mode = HUDLabel("Mode")
-        self.hud_mode.setMinimumWidth(120)
+        self.hud_mode.setMinimumWidth(90) # 25% Reduction Applied
         
         top_row.addWidget(self.hud_lat)
         top_row.addWidget(self.hud_lon)
-        top_row.addStretch()
         top_row.addWidget(self.hud_mode)
+        top_row.addStretch() # Align to left
         layout.addLayout(top_row)
         
         layout.addStretch()
         
-        # Bottom Row: Alt, Speed, Battery (Centered away from zoom buttons)
+        # Bottom Row: Alt, Speed, Battery (Aligned Left, matching Top Row)
         bot_row = QHBoxLayout()
-        bot_row.addStretch()
         self.hud_alt = HUDLabel("Altitude", "m")
         self.hud_speed = HUDLabel("Grd Speed", "m/s")
         self.hud_batt = HUDLabel("Battery", "V")
+        
         bot_row.addWidget(self.hud_alt)
         bot_row.addWidget(self.hud_speed)
         bot_row.addWidget(self.hud_batt)
-        bot_row.addStretch()
+        bot_row.addStretch() # Align to left
         layout.addLayout(bot_row)
 
     def update_telemetry(self, lat=None, lon=None, alt=None, speed=None, batt=None, mode=None):
