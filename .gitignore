@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+venv/
+env/
+.env
+
+# Cache and Data
+cache/
+*.log
+gcs_crash.log
+crash.log
+
+# AI Weights / Models
+*.pt
+*.engine
+*.onnx
+
+# IDEs
+.vscode/
+.idea/
