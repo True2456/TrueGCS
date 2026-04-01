@@ -12,7 +12,7 @@ from core.pid_controller import GimbalPIDController
 class GCSMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ISR Ground Control Station")
+        self.setWindowTitle("ISR GCS")
         self.setStyleSheet(BF3_STYLE)
 
         self.telemetry = None
@@ -180,6 +180,7 @@ class GCSMainWindow(QMainWindow):
             self.txt_p2.show()
 
     def update_video_frame(self, img):
+        self.tab_ops.video_label.set_source_frame_size(img.width(), img.height())
         pixmap = QPixmap.fromImage(img)
         scaled = pixmap.scaled(self.tab_ops.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.tab_ops.video_label.setPixmap(scaled)

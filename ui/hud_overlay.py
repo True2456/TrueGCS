@@ -8,11 +8,12 @@ class HUDLabel(QFrame):
         super().__init__(parent)
         self.setStyleSheet("""
             QFrame {
-                background-color: rgba(9, 14, 17, 0.7);
-                border-left: 3px solid #00ddff;
+                background-color: rgba(9, 14, 17, 0.85);
+                border-left: 2px solid #00ddff;
                 border-right: 1px solid rgba(0, 221, 255, 0.2);
                 border-top: 1px solid rgba(0, 221, 255, 0.1);
                 border-bottom: 1px solid rgba(0, 221, 255, 0.1);
+                border-radius: 6px;
             }
         """)
         self.setFixedWidth(110) # Enforce a tight, consistent width for all HUD blocks

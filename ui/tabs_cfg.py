@@ -106,7 +106,7 @@ class CfgTab(QWidget):
         self.add_param_ui(g_lay, "MNT1_RC_IN_TILT", 5, "RC Input Tilt")
         self.add_param_ui(g_lay, "MNT1_RC_IN_PAN", 6, "RC Input Pan")
 
-        # 3. Serial Tab
+        # 3. Serial Hub (Extended to all common UARTs)
         tab_serial = QWidget()
         s_lay = QGridLayout(tab_serial)
         s_lay.setAlignment(Qt.AlignTop)
@@ -114,6 +114,31 @@ class CfgTab(QWidget):
         self.add_param_ui(s_lay, "SERIAL1_BAUD", 1, "Telemetry 1 Baud")
         self.add_param_ui(s_lay, "SERIAL2_PROTOCOL", 2, "Telemetry 2 Protocol")
         self.add_param_ui(s_lay, "SERIAL2_BAUD", 3, "Telemetry 2 Baud")
+        self.add_param_ui(s_lay, "SERIAL3_PROTOCOL", 4, "GPS 1 / Telemetry 3 Protocol")
+        self.add_param_ui(s_lay, "SERIAL3_BAUD", 5, "GPS 1 / Telemetry 3 Baud")
+        self.add_param_ui(s_lay, "SERIAL4_PROTOCOL", 6, "GPS 2 / Telemetry 4 Protocol")
+        self.add_param_ui(s_lay, "SERIAL4_BAUD", 7, "GPS 2 / Telemetry 4 Baud")
+        self.add_param_ui(s_lay, "SERIAL5_PROTOCOL", 8, "Telemetry 5 Protocol")
+        self.add_param_ui(s_lay, "SERIAL5_BAUD", 9, "Telemetry 5 Baud")
+        self.add_param_ui(s_lay, "SERIAL6_PROTOCOL", 10, "Telemetry 6 Protocol")
+        self.add_param_ui(s_lay, "SERIAL6_BAUD", 11, "Telemetry 6 Baud")
+
+        # 3.5 Sensor Config (New)
+        tab_sensors = QWidget()
+        sn_lay = QGridLayout(tab_sensors)
+        sn_lay.setAlignment(Qt.AlignTop)
+        # GPS Section
+        self.add_param_ui(sn_lay, "GPS_TYPE", 0, "GPS 1 Type (Ublox=2)")
+        self.add_param_ui(sn_lay, "GPS_GNSS_MODE", 1, "Constellation Mode")
+        self.add_param_ui(sn_lay, "GPS_SAVE_CFG", 2, "Save GPS Config")
+        # Airspeed Section
+        self.add_param_ui(sn_lay, "ARSPD_TYPE", 3, "Airspeed Type")
+        self.add_param_ui(sn_lay, "ARSPD_USE", 4, "Use Airspeed (1=Yes)")
+        self.add_param_ui(sn_lay, "ARSPD_PIN", 5, "Airspeed Pin")
+        # Rangefinder Section
+        self.add_param_ui(sn_lay, "RNGFND1_TYPE", 6, "Rangefinder Type")
+        self.add_param_ui(sn_lay, "RNGFND1_PIN", 7, "Rangefinder Pin")
+        self.add_param_ui(sn_lay, "RNGFND1_MAX_CM", 8, "Rangefinder Max Range (cm)")
         
         # 4. Failsafes Tab
         tab_fs = QWidget()
@@ -174,7 +199,8 @@ class CfgTab(QWidget):
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_vtol), "VTOL / Tailsitter")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_pid), "VTOL PID Tuning")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_gimbal), "Gimbal & Payload")
-        self.cfg_tabs.addTab(self.wrap_in_scroll(tab_serial), "Serial Defaults")
+        self.cfg_tabs.addTab(self.wrap_in_scroll(tab_serial), "Serial Hub")
+        self.cfg_tabs.addTab(self.wrap_in_scroll(tab_sensors), "Sensor Config")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_fs), "Failsafes & Safety")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_map), "Map Tools")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_gt), "Gimbal Tuning")

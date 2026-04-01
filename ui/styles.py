@@ -23,13 +23,15 @@ QLabel#DataLabel {
 QPushButton {
     background-color: rgba(0, 221, 255, 0.1);
     border: 1px solid #00ddff;
+    border-radius: 4px;
     color: #00ddff;
     padding: 6px 15px;
     font-weight: bold;
     text-transform: uppercase;
 }
 QPushButton:hover {
-    background-color: rgba(0, 221, 255, 0.3);
+    background-color: rgba(0, 221, 255, 0.25);
+    border: 1px solid #ffffff;
 }
 QPushButton:pressed {
     background-color: #00ddff;
@@ -38,6 +40,7 @@ QPushButton:pressed {
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: rgba(255, 255, 255, 0.05);
     border: 1px solid #2a4555;
+    border-radius: 4px;
     color: #ffffff;
     padding: 4px;
 }
@@ -47,20 +50,24 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
 QComboBox QAbstractItemView {
     background-color: #111a22;
     border: 1px solid #2a4555;
+    border-radius: 4px;
     color: #ffffff;
     selection-background-color: rgba(0, 221, 255, 0.3);
 }
 QMenu {
     background-color: #111a22;
     border: 1px solid #2a4555;
+    border-radius: 4px;
     color: #ffffff;
     padding: 5px;
 }
 QMenu::item:selected {
     background-color: rgba(0, 221, 255, 0.3);
+    border-radius: 2px;
 }
 QCheckBox::indicator {
     border: 1px solid #2a4555;
+    border-radius: 2px;
     width: 14px;
     height: 14px;
     background-color: #090e11;
@@ -70,6 +77,9 @@ QCheckBox::indicator:checked {
 }
 QTabWidget::pane {
     border: 1px solid #00ddff;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+    border-top-right-radius: 6px;
     background-color: #090e11;
 }
 QTabBar::tab {
@@ -77,9 +87,12 @@ QTabBar::tab {
     color: #557788;
     padding: 10px 30px;
     border: 1px solid #2a4555;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
     border-bottom: none;
     font-weight: bold;
     font-size: 14px;
+    margin-right: 2px;
 }
 QTabBar::tab:selected {
     background-color: rgba(0, 221, 255, 0.15);
@@ -89,6 +102,7 @@ QTabBar::tab:selected {
 }
 QGroupBox {
     border: 1px solid #2a4555;
+    border-radius: 6px;
     margin-top: 15px;
     font-weight: bold;
     color: #00ddff;
@@ -105,6 +119,7 @@ QWebEngineView {
 }
 QGroupBox#MapGroupBox {
     border: 1px solid rgba(0, 221, 255, 0.35);
+    border-radius: 8px;
     background-color: #060a0d;
 }
 QGroupBox#MapGroupBox::title {

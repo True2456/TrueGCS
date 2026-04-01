@@ -39,6 +39,9 @@ class TelemetryThread(QThread):
         self.last_heartbeats = {}
         self._last_cleanup_time = 0
         self._pending_missions = {} # sysid -> [wp1, wp2, ...]
+        # Latest known mount orientation (degrees), indexed by sysid.
+        # Used to align gimbal controllers so "center slew" doesn't assume 0 degrees.
+        self.mount_angles = {}
 
     def _ensure_drone(self, sysid):
         if sysid not in self.known_drones:
@@ -50,6 +53,7 @@ class TelemetryThread(QThread):
             self._last_hud_summary[sysid] = (-1.0, -1.0, -1.0)
             self._modes_emitted[sysid] = False
             self.last_heartbeats[sysid] = time.time()
+            self.mount_angles[sysid] = (0.0, 0.0)  # (pitch_deg, yaw_deg)
             self.signals.drone_discovered.emit(self.node_id, sysid, self.color)
         else:
             self.last_heartbeats[sysid] = time.time()
@@ -80,6 +84,8 @@ class TelemetryThread(QThread):
                     sysid = msg.get_srcSystem()
                     
                     if msg_type in ['HEARTBEAT', 'GLOBAL_POSITION_INT', 'VFR_HUD', 'SYS_STATUS', 'ATTITUDE', 'STATUSTEXT', 'PARAM_VALUE']:
+                        self._ensure_drone(sysid)
+                    elif msg_type in ['MOUNT_STATUS', 'MOUNT_ORIENTATION']:
                         self._ensure_drone(sysid)
 
                     # Watchdog Check — Prune silent drones after 15s of no communication
@@ -159,6 +165,24 @@ class TelemetryThread(QThread):
                         pitch = math.degrees(msg.pitch)
                         yaw = math.degrees(msg.yaw)
                         self.signals.attitude_updated.emit(self.node_id, sysid, roll, pitch, yaw)
+
+                    elif msg_type in ('MOUNT_STATUS', 'MOUNT_ORIENTATION'):
+                        # Attempt to read mount angles in degrees (field names vary slightly by message)
+                        mount_pitch = getattr(msg, 'mount_pitch', None)
+                        mount_yaw = getattr(msg, 'mount_yaw', None)
+                        mount_roll = getattr(msg, 'mount_roll', None)
+                        if mount_pitch is None:
+                            mount_pitch = getattr(msg, 'pitch', None)
+                        if mount_yaw is None:
+                            mount_yaw = getattr(msg, 'yaw', None)
+                        if mount_roll is None:
+                            mount_roll = getattr(msg, 'roll', None)
+                        if mount_pitch is not None and mount_yaw is not None:
+                            try:
+                                self.mount_angles[sysid] = (float(mount_pitch), float(mount_yaw))
+                            except Exception:
+                                # Ignore malformed values
+                                pass
 
                     elif msg_type == 'STATUSTEXT':
                         self.signals.status_text_updated.emit(self.node_id, sysid, msg.text)

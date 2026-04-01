@@ -35,10 +35,10 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   /* Slide-out Mission Panel */
   #mission-panel {{
     position: absolute; top: 10px; right: -320px; bottom: 10px; width: 300px;
-    background: rgba(9, 21, 28, 0.94); border: 1px solid rgba(0, 221, 255, 0.3);
-    z-index: 2000; border-radius: 4px; display: flex; flex-direction: column;
-    box-shadow: -5px 0 25px rgba(0,0,0,0.8); transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-    backdrop-filter: blur(10px);
+    background: rgba(9, 21, 28, 0.96); border: 1px solid rgba(0, 221, 255, 0.35);
+    z-index: 2000; border-radius: 10px; display: flex; flex-direction: column;
+    box-shadow: -10px 0 30px rgba(0,0,0,0.85); transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    backdrop-filter: blur(12px);
   }}
   #mission-panel.open {{ right: 10px; }}
   
@@ -55,8 +55,8 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 
   .wp-item {{
     background: rgba(255,255,255,0.03); border: 1px solid rgba(146, 176, 195, 0.15);
-    border-radius: 3px; padding: 8px; margin-bottom: 6px; position: relative;
-    font-size: 11px; color: #92b0c3;
+    border-radius: 6px; padding: 10px; margin-bottom: 8px; position: relative;
+    font-size: 11px; color: #92b0c3; transition: all 0.25s;
   }}
   .wp-item:hover {{ border-color: rgba(0, 221, 255, 0.4); background: rgba(0, 221, 255, 0.05); }}
   
@@ -119,10 +119,12 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   
   #mission-toggle-btn {{
      position: absolute; top: 10px; right: 10px; z-index: 1000;
-     background: rgba(9, 21, 28, 0.9); border: 1px solid #00ddff; color: #00ddff;
-     padding: 8px 15px; border-radius: 4px; font-weight: bold; font-size: 12px;
-     cursor: pointer; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+     background: rgba(9, 21, 28, 0.94); border: 1px solid #00ddff; color: #00ddff;
+     padding: 8px 18px; border-radius: 6px; font-weight: bold; font-size: 12px;
+     cursor: pointer; letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }}
+  #mission-toggle-btn:hover {{ background: #00ddff; color: #000; }}
 </style>
 </head>
 <body>

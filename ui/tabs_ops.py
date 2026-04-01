@@ -1,20 +1,49 @@
 import os
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGridLayout, QLabel, QComboBox, QPushButton, QCheckBox, QLineEdit, QSplitter, QSizePolicy
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from ui.map_widget import SatelliteMapWidget
 from ui.hud_overlay import MapHUD, VideoHUD
 
 
 class ClickableVideoLabel(QLabel):
+    frame_clicked = Signal(int, int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.video_thread = None
         self.chk_tracking = None
+        self._frame_w = 0
+        self._frame_h = 0
+
+    def set_source_frame_size(self, width, height):
+        self._frame_w = int(width)
+        self._frame_h = int(height)
 
     def mousePressEvent(self, event):
-        # Click-to-track removed; clicks are ignored.
-        pass
+        pm = self.pixmap()
+        if not pm or pm.isNull() or self._frame_w <= 0 or self._frame_h <= 0:
+            return
+
+        label_w = self.width()
+        label_h = self.height()
+        pm_w = pm.width()
+        pm_h = pm.height()
+        if pm_w <= 0 or pm_h <= 0:
+            return
+
+        off_x = (label_w - pm_w) / 2.0
+        off_y = (label_h - pm_h) / 2.0
+        click_x = float(event.position().x()) - off_x
+        click_y = float(event.position().y()) - off_y
+        if click_x < 0 or click_y < 0 or click_x > pm_w or click_y > pm_h:
+            return
+
+        src_x = int((click_x / pm_w) * self._frame_w)
+        src_y = int((click_y / pm_h) * self._frame_h)
+        src_x = max(0, min(self._frame_w - 1, src_x))
+        src_y = max(0, min(self._frame_h - 1, src_y))
+        self.frame_clicked.emit(src_x, src_y)
 
 
 class OpsTab(QWidget):
@@ -49,8 +78,9 @@ class OpsTab(QWidget):
         # Row 1: Connection Settings
         vid_ctrl_layout1.addWidget(QLabel("TYPE:"))
         self.combo_vid_type = QComboBox()
-        self.combo_vid_type.addItems(["UDP Stream", "USB Sensor", "RTP Stream"])
-        self.combo_vid_type.setFixedWidth(100)
+        self.combo_vid_type.addItems(["UDP Stream", "USB Sensor", "RTP Stream", "RTMP Server (DJI)"])
+        self.combo_vid_type.setFixedWidth(120)
+        self.combo_vid_type.currentIndexChanged.connect(self._on_vid_type_changed)
         vid_ctrl_layout1.addWidget(self.combo_vid_type)
         
         vid_ctrl_layout1.addWidget(QLabel("IP:"))
@@ -74,15 +104,29 @@ class OpsTab(QWidget):
         self.chk_enable_det = QCheckBox("Detect")
         self.chk_enable_det.setChecked(False)
         self.chk_tracking = QCheckBox("Track")
+        self.chk_tracking.setChecked(False)
+        self.combo_tracking_mode = QComboBox()
+        self.combo_tracking_mode.addItem("No Tracking", userData="none")
+        self.combo_tracking_mode.addItem("Click Nearest Detection", userData="nearest")
+        self.combo_tracking_mode.addItem("Click Pixel Seed", userData="seed")
+        self.combo_tracking_mode.addItem("Click Center Slew", userData="center")
         self.chk_show_logs = QCheckBox("Logs")
         self.chk_show_logs.setChecked(False)
         vid_ctrl_layout2.addWidget(self.chk_enable_det)
         vid_ctrl_layout2.addWidget(self.chk_tracking)
+        vid_ctrl_layout2.addWidget(self.combo_tracking_mode)
         vid_ctrl_layout2.addWidget(self.chk_show_logs)
         vid_ctrl_layout2.addStretch()
         
         vid_layout.addLayout(vid_ctrl_layout1)
         vid_layout.addLayout(vid_ctrl_layout2)
+        
+        # Row 3: RTMP/Stream URL Display (Contextual HUD)
+        self.lbl_stream_url = QLabel("")
+        self.lbl_stream_url.setStyleSheet("color: #00ddff; font-family: 'Consolas'; font-size: 10px; background: rgba(0,0,0,0.2); padding: 2px;")
+        self.lbl_stream_url.setAlignment(Qt.AlignCenter)
+        self.lbl_stream_url.setVisible(False)
+        vid_layout.addWidget(self.lbl_stream_url)
 
         # Video Display with Overlay
         vid_container = QWidget()
@@ -104,37 +148,48 @@ class OpsTab(QWidget):
         vid_layout.addWidget(vid_container)
         
         left_pnl.addWidget(vid_box)
+        left_pnl.setStretch(0, 10) # 10:1 stretch for the video panel
         
+        # Bottom row: Compact Telemetry data (Side-by-side)
+        telem_row = QHBoxLayout()
+        telem_row.setContentsMargins(0, 5, 0, 0)
+        telem_row.setSpacing(5)
+
         # Attitude HUD Component
-        att_box = QGroupBox("Attitude HUD")
+        att_box = QGroupBox("Attitude")
         att_layout = QGridLayout(att_box)
+        att_layout.setContentsMargins(8, 12, 8, 8)
+        att_layout.setSpacing(2)
         self.lbl_roll = QLabel("0.0°"); self.lbl_roll.setObjectName("DataLabel")
         self.lbl_pitch = QLabel("0.0°"); self.lbl_pitch.setObjectName("DataLabel")
         self.lbl_yaw = QLabel("0.0°"); self.lbl_yaw.setObjectName("DataLabel")
         
-        att_layout.addWidget(QLabel("ROLL:"), 0, 0); att_layout.addWidget(self.lbl_roll, 0, 1)
-        att_layout.addWidget(QLabel("PITCH:"), 1, 0); att_layout.addWidget(self.lbl_pitch, 1, 1)
-        att_layout.addWidget(QLabel("YAW:"), 2, 0); att_layout.addWidget(self.lbl_yaw, 2, 1)
-        left_pnl.addWidget(att_box)
+        att_layout.addWidget(QLabel("R:"), 0, 0); att_layout.addWidget(self.lbl_roll, 0, 1)
+        att_layout.addWidget(QLabel("P:"), 0, 2); att_layout.addWidget(self.lbl_pitch, 0, 3)
+        att_layout.addWidget(QLabel("Y:"), 1, 0); att_layout.addWidget(self.lbl_yaw, 1, 1)
+        telem_row.addWidget(att_box)
         
         # Target HUD Component
-        tgt_box = QGroupBox("Tactical Target Data")
+        tgt_box = QGroupBox("Tactical Target")
         tgt_layout = QGridLayout(tgt_box)
+        tgt_layout.setContentsMargins(8, 12, 8, 8)
+        tgt_layout.setSpacing(2)
         self.lbl_tgt_status = QLabel("SEARCHING"); self.lbl_tgt_status.setObjectName("DataLabel")
         self.lbl_tgt_offset = QLabel("0, 0 px"); self.lbl_tgt_offset.setObjectName("DataLabel")
         self.lbl_tgt_conf = QLabel("0%"); self.lbl_tgt_conf.setObjectName("DataLabel")
         
-        tgt_layout.addWidget(QLabel("STATUS:"), 0, 0); tgt_layout.addWidget(self.lbl_tgt_status, 0, 1)
-        tgt_layout.addWidget(QLabel("OFFSET:"), 1, 0); tgt_layout.addWidget(self.lbl_tgt_offset, 1, 1)
-        tgt_layout.addWidget(QLabel("CONF:"), 2, 0); tgt_layout.addWidget(self.lbl_tgt_conf, 2, 1)
+        tgt_layout.addWidget(QLabel("ST:"), 0, 0); tgt_layout.addWidget(self.lbl_tgt_status, 0, 1)
+        tgt_layout.addWidget(QLabel("OFF:"), 0, 2); tgt_layout.addWidget(self.lbl_tgt_offset, 0, 3)
+        tgt_layout.addWidget(QLabel("CF:"), 1, 0); tgt_layout.addWidget(self.lbl_tgt_conf, 1, 1)
         
-        self.btn_wipe_lock = QPushButton("Wipe Lock")
-        self.btn_wipe_lock.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border-color: #ff3232; color: #ff3232;")
-        tgt_layout.addWidget(self.btn_wipe_lock, 3, 0, 1, 2)
+        self.btn_wipe_lock = QPushButton("Wipe")
+        self.btn_wipe_lock.setFixedWidth(50)
+        self.btn_wipe_lock.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border-color: #ff3232; color: #ff3232; font-size: 9px;")
+        tgt_layout.addWidget(self.btn_wipe_lock, 1, 2, 1, 2)
         
-        left_pnl.addWidget(tgt_box)
+        telem_row.addWidget(tgt_box)
+        left_pnl.addLayout(telem_row)
         
-        left_pnl.addStretch()
         splitter.addWidget(left_widget)
 
         # Right Panel (Map Background with HUD Overlay)
@@ -155,11 +210,9 @@ class OpsTab(QWidget):
         splitter.setStretchFactor(1, 2)
 
     def update_position(self, lat, lon, alt):
-        """Called by telemetry signal: position_updated(float, float, float)."""
+        """Called by telemetry signal: position_updated(node_id, sysid, lat, lon, alt)."""
         if self.map_hud:
             self.map_hud.update_telemetry(lat=lat, lon=lon, alt=alt)
-        # Update drone marker on the satellite map
-        self.map_widget.update_drone_position(lat, lon, heading=self._last_yaw)
 
     def update_attitude(self, roll, pitch, yaw):
         """Called by telemetry signal: attitude_updated(float, float, float)."""
@@ -173,6 +226,31 @@ class OpsTab(QWidget):
     def _toggle_pilot_hud(self, checked):
         if self.video_hud:
             self.video_hud.setVisible(checked)
+
+    def _on_vid_type_changed(self, index):
+        type_str = self.combo_vid_type.currentText()
+        if "RTMP" in type_str:
+            import socket
+            try:
+                # Determine local IP for drone connection
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except:
+                local_ip = "127.0.0.1"
+                
+            url = f"rtmp://{local_ip}:1935/live/drone"
+            self.lbl_stream_url.setText(f"POINT DJI DRONE TO: {url}")
+            self.lbl_stream_url.setVisible(True)
+            # Default RTMP port for DJI
+            self.txt_vid_port.setText("1935")
+            self.txt_vid_ip.setText(local_ip)
+        else:
+            self.lbl_stream_url.setVisible(False)
+            if "UDP" in type_str:
+                self.txt_vid_port.setText("5008")
+                self.txt_vid_ip.setText("0.0.0.0")
 
     def update_target_status(self, status, off_x, off_y, conf):
         self.lbl_tgt_status.setText(status)

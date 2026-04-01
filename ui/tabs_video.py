@@ -38,8 +38,13 @@ class VideoTab(QWidget):
         
         ai_grid.addWidget(QLabel("Detection Model:"), 1, 0)
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["RT-DETR v2"])
+        # Tactical mission-specific presets
+        self.model_combo.addItems([
+            "YOLO26-VisDrone (Custom)",
+            "RT-DETR v2"
+        ])
         # No auto‑apply; model changes are applied via the Apply button
+        self.model_combo.currentIndexChanged.connect(self._handle_model_visibility)
         ai_grid.addWidget(self.model_combo, 1, 1)
 
         self.lbl_search_prompt = QLabel("Search Prompt:")
@@ -53,10 +58,10 @@ class VideoTab(QWidget):
         ai_grid.addWidget(self.lbl_search_prompt, 2, 0)
         ai_grid.addWidget(self.txt_search_prompt, 2, 1)
 
-        btn_apply_ai = QPushButton("Apply AI Engine Settings")
-        btn_apply_ai.clicked.connect(self._emit_ai_engine)
-        btn_apply_ai.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); border: 1px solid #00ddff; color: #00ddff;")
-        ai_grid.addWidget(btn_apply_ai, 3, 0, 1, 2) # Moved to row 3 to prevent overlap 🚀
+        self.btn_apply_ai = QPushButton("Apply AI Engine Settings")
+        self.btn_apply_ai.clicked.connect(self._emit_ai_engine)
+        self.btn_apply_ai.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); border: 1px solid #00ddff; color: #00ddff;")
+        ai_grid.addWidget(self.btn_apply_ai, 3, 0, 1, 2) # Moved to row 3 to prevent overlap 🚀
         ai_lay.addLayout(ai_grid)
         
         container_layout.addWidget(ai_box)
@@ -91,6 +96,8 @@ class VideoTab(QWidget):
         self.search_prompt_changed.emit(self.txt_search_prompt.text())
 
     def _handle_model_visibility(self, index):
-        # No special UI for world prompts with RT‑DETR only
-        self.lbl_search_prompt.setVisible(False)
-        self.txt_search_prompt.setVisible(False)
+        text = self.model_combo.itemText(index)
+        is_world = "World" in text
+        # Only YOLO-World exposes the dynamic search prompt
+        self.lbl_search_prompt.setVisible(is_world)
+        self.txt_search_prompt.setVisible(is_world)

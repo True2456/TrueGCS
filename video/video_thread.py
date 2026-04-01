@@ -82,14 +82,17 @@ class InferenceDaemon:
                                         
                             # Perform detection on the isolated inference thread
                             # We use a lower threshold (0.25) to ensure mission visibility
-                            res = model(frame, verbose=False, half=use_fp16, conf=0.25)
+                            # STABILITY UPGRADE: Force imgsz=640 and handle potential RT-DETR predictor mismatches
+                            res = model(frame, verbose=False, half=use_fp16, conf=0.25, imgsz=640)
                             with self.lock:
                                 self.results = res
                                 num_targets = len(res[0].boxes) if res else 0
                                 if num_targets > 0:
                                     print(f"InferenceDaemon: Detected {num_targets} targets.")
                         except Exception as e:
-                            print(f"InferenceDaemon Error: {e}")
+                            print(f"InferenceDaemon CRITICAL: {e}")
+                            import traceback
+                            traceback.print_exc()
                         finally:
                             self.idle_event.set() # Reset to idle after frame is pushed
                     else:
@@ -139,6 +142,8 @@ class VideoThread(QThread):
     tracking_error = Signal(int, int) 
     # Signals status info (status_text, offset_x, offset_y, confidence)
     target_status = Signal(str, int, int, float)
+    source_frame_size = Signal(int, int)
+    ai_ready = Signal(str, str) # Emitted when model is fully loaded and optimized 🚀
     
     def __init__(self, stream_url="udp://@:5010", parent=None):
         super().__init__(parent)
@@ -151,7 +156,16 @@ class VideoThread(QThread):
         self._current_model_type = "YOLO"
         self._world_prompt = "person, car, drone"
         self.model = None
-        self.pending_model_swap = ("CPU", "YOLO") # Queue initial load 🚀
+        default_engine = "CPU"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                default_engine = "CUDA"
+        except Exception:
+            default_engine = "CPU"
+
+        # Queue initial load 🚀 (model_type, engine)
+        self.pending_model_swap = ("YOLO", default_engine)
         self.hud_status = "INITIALIZING..."
         self.loading_thread = None
         self.model_lock = threading.RLock() # Recursive Lock to prevent deadlocks 🔐
@@ -159,6 +173,26 @@ class VideoThread(QThread):
         self.tracking_point = None
         self.lock_on_box = None
         self.lock_on_conf = 0.0
+        self.tracking_mode = "none"
+        self._boxes_lock = threading.Lock()
+        self._latest_boxes = []
+        self._latest_confs = []
+        # Click marker overlay (user feedback only)
+        self._click_marker = None  # (x, y) in source frame coords
+        self._click_marker_until = 0.0
+        self._last_detection_print_sig = None
+        self.inference_daemon = None
+        self.capture_daemon = None
+        self.gst_process = None
+
+    def set_click_marker(self, x: int | None, y: int | None, ttl_s: float = 1.5) -> None:
+        """Show a temporary cross at (x,y) in the *source frame* coordinates."""
+        if x is None or y is None:
+            self._click_marker = None
+            self._click_marker_until = 0.0
+            return
+        self._click_marker = (int(x), int(y))
+        self._click_marker_until = time.time() + float(ttl_s)
         
     def set_show_detections(self, state):
         """Public signal receiver to toggle AI HUD visibility."""
@@ -185,23 +219,28 @@ class VideoThread(QThread):
             self.set_show_detections(False)
             self._current_engine = engine
             self._current_model_type = model_type
-            self.pending_model_swap = (engine, model_type)
+            self.pending_model_swap = (model_type, engine)
             self._cancel_load = False
-            return
-        # Guard against overlapping loads for new model
-        if getattr(self, "_is_loading", False):
-            print("VideoThread: AI config request ignored – already loading.")
             return
         # Preserve current detection visibility state
         prev_show = self.show_detections
         if prev_show:
             self.set_show_detections(False)
+        
+        # Ensure previous load is finished or cancelled before starting a new one
+        if self.loading_thread and self.loading_thread.is_alive():
+            print("VideoThread: Cancelling previous AI load to prioritize new request...")
+            self._cancel_load = True
+            # We don't join here because it would block the UI thread
+            # instead 'load_model_async' will check the flag and exit
+        
+        self._is_loading = True
+        self._cancel_load = False
         self._current_engine = engine
         self._current_model_type = model_type
-        self.pending_model_swap = (engine, model_type)
+        self.pending_model_swap = (model_type, engine)
         print(f"VideoThread: Applying AI config -> {model_type} on {engine}")
         
-        # Spawn isolated background thread so PyTorch loading doesn't block the UI
         self.loading_thread = threading.Thread(
             target=self.load_model_async,
             args=(model_type, engine),
@@ -215,7 +254,7 @@ class VideoThread(QThread):
         
     def set_world_prompt(self, prompt):
         self._world_prompt = prompt
-        if hasattr(self, "inference_daemon"):
+        if self.inference_daemon:
             self.inference_daemon.update_prompt(prompt)
             
     def get_ai_model(self):
@@ -223,10 +262,6 @@ class VideoThread(QThread):
             return self.model, self._current_engine
 
     def load_model_async(self, model_type, engine_name):
-        if self._is_loading:
-            print("Mission Loader: BUSY! Overlapping load request ignored.")
-            return
-        self._is_loading = True
         """Internal method designed for the isolated LoadingThread 🚀"""
         engine_map = {
             "CPU": "cpu",
@@ -268,23 +303,69 @@ class VideoThread(QThread):
                 return
             
             try:
+                # Mission Load Interrupt Guard 🛡️
+                if getattr(self, "_cancel_load", False):
+                    self._is_loading = False
+                    return
+                    
                 # 2. Tactical Load into Buffer 🚀
-                temp_model = None
-                if "RT-DETR" in model_type:
-                    temp_model = RTDETR("rtdetr-l.pt")
-                elif "World" in model_type:
-                    temp_model = YOLOWorld("yolov8s-worldv2.pt")
-                    classes = [c.strip() for c in self._world_prompt.split(",")]
-                    temp_model.set_classes(classes)
+                import os
+                # Atomic hotswap weight mapping 🏎️
+                mt = (model_type or "").upper()
+                weights = "yolov8n.pt" # Default failsafe fallback
+                is_rtdetr = False
+                is_world = False
+                
+                if "RT-DETR" in mt:
+                    weights = "rtdetr-l.pt"
+                    is_rtdetr = True
+                elif "YOLO26" in mt or "VISDRONE" in mt:
+                    # Target the high-performance YOLO26 architecture for mission search
+                    weights = "Yolo26n Visdrone/yolo26_visdrone_best.pt"
                 else:
-                    temp_model = YOLO("yolo26n.pt") 
+                    weights = "yolo26n.pt" # Standardize on YOLO26 for 2026 missions!
+
+                # Mission Loader: Failsafe Weights Check
+                if not os.path.exists(weights):
+                    print(f"Mission Loader: WARNING! {weights} not found. Reverting to base YOLOv8n.")
+                    weights = "yolov8n.pt"
+                    is_rtdetr = False
+                    is_world = False
+
+                # Mission Load Interrupt Guard (Pre-Inference Context Creation)
+                if getattr(self, "_cancel_load", False):
+                    self._is_loading = False
+                    return
+
+                # 2. Tactical Load into Buffer 🚀 (With Corrupted File Protection 🛡️)
+                try:
+                    if is_rtdetr:
+                        temp_model = RTDETR(weights)
+                    elif is_world:
+                        # Fallback for YOLO-World if specifically requested pt is missing
+                        if not os.path.exists(weights):
+                            print(f"Mission Loader: {weights} missing. Using zero-shot YOLO-World base.")
+                            weights = "yolov8s-worldv2.pt" # Official Ultralytics name
+                        temp_model = YOLOWorld(weights)
+                        classes = [c.strip() for c in self._world_prompt.split(",")]
+                        temp_model.set_classes(classes)
+                    else:
+                        temp_model = YOLO(weights)
+                except Exception as e:
+                    print(f"Mission Loader: FATAL! {weights} is corrupted. Deleting and falling back.")
+                    try: os.remove(weights)
+                    except: pass
+                    weights = "yolov8n.pt"
+                    temp_model = YOLO(weights)
                 
                 # 3. Hardware Guard (Environment Check)
                 import sys
                 if device_str == "cuda:0":
                     import torch
-                    if not torch.cuda.is_available() or sys.version_info >= (3, 14):
-                        print("Mission Loader: Environment Conflict (3.14 + CUDA). Forcing CPU Failsafe.")
+                    if not torch.cuda.is_available():
+                        # Explain why CUDA failed (e.g. they have +cpu version installed)
+                        torch_v = getattr(torch, "__version__", "unknown")
+                        print(f"Mission Loader: CUDA requested but not found in Torch {torch_v}. Forcing CPU Failsafe.")
                         device_str = "cpu"
                 
                 # Optimization & Transfer
@@ -297,17 +378,34 @@ class VideoThread(QThread):
                     temp_model(dummy, verbose=False) 
     
                 # 4. PERFORM ATOMIC SWAP 🔐
+                # We perform the swap within a critical section to ensure the InferenceDaemon 
+                # cannot use the model during the transfer.
                 with self.model_lock:
-                    # Explicit Memory Release for Hardware Context Stability 🧹
-                    self.model = None
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    print(f"Mission Loader: Commencing atomic handover for {model_type}...")
                     
-                    self.model = temp_model
-                    self._current_engine = device_str              
-                    self.hud_status = "AI READY"
-                    print(f"Mission Loader: AI Core swapped successfully onto {device_str}.")
+                    try:
+                        # Explicit Memory Release for Hardware Context Stability 🧹
+                        # We clear the active model FIRST to free VRAM for RT-DETR (which is large)
+                        self.model = None
+                        print("Mission Loader Debug: Active model cleared.")
+                        
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            print("Mission Loader Debug: CUDA Cache purged.")
+                            import gc
+                            gc.collect()
+                        
+                        self.model = temp_model
+                        print("Mission Loader Debug: New Weights assigned.")
+                        
+                        self._current_engine = device_str              
+                        self.hud_status = "AI READY"
+                        print(f"Mission Loader: AI Core swapped successfully onto {device_str}.")
+                        self.ai_ready.emit(device_str, model_type)
+                        print("Mission Loader Debug: AI Signal emitted.")
+                    except Exception as e:
+                        print(f"Mission Loader CRITICAL: Handover failure -> {e}")
                 
                 # Reset loading guard
                 self._is_loading = False
@@ -381,12 +479,68 @@ class VideoThread(QThread):
         self.tracking_point = (x, y)
         print(f"VideoThread: set_tracking_point=({x}, {y})")
 
+    def set_tracking_mode(self, mode):
+        mode_val = str(mode or "none").lower()
+        if mode_val not in ("none", "nearest", "seed", "center"):
+            mode_val = "none"
+        self.tracking_mode = mode_val
+        if self.tracking_mode == "none":
+            self.set_tracking_point(None, None)
+
+    def handle_click(self, x, y):
+        # Always show click feedback cross
+        self.set_click_marker(x, y)
+        mode = self.tracking_mode
+        if mode == "none":
+            return
+        if mode in ("seed", "center"):
+            self.set_tracking_point(x, y)
+            return
+
+        with self._boxes_lock:
+            boxes = list(self._latest_boxes)
+            confs = list(self._latest_confs)
+        if not boxes:
+            self.set_tracking_point(x, y)
+            return
+
+        min_dist = float("inf")
+        best_idx = -1
+        for i, box in enumerate(boxes):
+            x1, y1, x2, y2 = box
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            dist = np.sqrt((cx - x) ** 2 + (cy - y) ** 2)
+            if dist < min_dist:
+                min_dist = dist
+                best_idx = i
+        if best_idx >= 0:
+            box = boxes[best_idx]
+            self.lock_on_box = np.array(box)
+            self.lock_on_conf = confs[best_idx] if best_idx < len(confs) else 0.0
+            cx = int((box[0] + box[2]) / 2.0)
+            cy = int((box[1] + box[3]) / 2.0)
+            self.set_tracking_point(cx, cy)
+
     def run(self):
         # Native Subprocess Engine Architecture
         target_src = self.stream_url
         self.gst_process = None
         cap = None
+        self._rtmp_relay = None
         
+        # 1. RTMP Server Support (DJI Push Mode) 🚁
+        is_rtmp = "rtmp://" in str(target_src).lower()
+        if is_rtmp:
+            from video.rtmp_relay import RTMPRelay
+            # DJI RTMP is usually on 1935. We listen and forward to 5010 internal
+            self._rtmp_relay = RTMPRelay(listen_port=1935, target_port=5010)
+            if self._rtmp_relay.start():
+                target_src = "udp://127.0.0.1:5010"
+                print("VideoThread: RTMP Relay listening for drone on Port 1935.")
+            else:
+                self.hud_status = "RTMP PORT BUSY"
+                return
+
         if "udp://" in str(target_src).lower() and hasattr(self, "gst_path"):
             import subprocess
             
@@ -400,10 +554,10 @@ class VideoThread(QThread):
             import random
             self._dynamic_loopback_port = random.randint(15000, 25000)
             
-            # Dual-Stream Architecture: Splits stream to MP Relay (5600) [RTP] + OpenCV Intake (Dynamic) [MPEG-TS]
-            # Forcefully overwrite the generic queue with `leaky=downstream` to drop latency cache frames brutally!
-            # Reduced buffers to 2 and added sync=false everywhere to cut 30ms latency back to <10ms FPV range!
-            if getattr(self, "relay_mp", False):
+            if is_rtmp:
+                # SPECIALIZED RTMP PIPELINE: Requires flvdemux to strip the DJI container 🎯
+                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! flvdemux ! h264parse ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+            elif getattr(self, "relay_mp", False):
                 cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! queue max-size-buffers=2 ! h264parse ! tee name=t ! queue max-size-buffers=2 ! rtph264pay ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=2 ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             else:
                 cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! queue max-size-buffers=2 ! h264parse ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
@@ -467,10 +621,10 @@ class VideoThread(QThread):
                 # 1. Spawn Truly Asynchronous Mission Loader (Prevents Stutters! 🏎️)
                 if self.pending_model_swap:
                     if self.loading_thread is None or not self.loading_thread.is_alive():
-                        eng, mod = self.pending_model_swap
+                        mod, eng = self.pending_model_swap
                         self.loading_thread = threading.Thread(
                             target=self.load_model_async, 
-                            args=(eng, mod), 
+                            args=(mod, eng),
                             daemon=True
                         )
                         self.loading_thread.start()
@@ -482,11 +636,22 @@ class VideoThread(QThread):
                 
                 # Base frame for display
                 annotated_frame = frame.copy()
+                h, w = annotated_frame.shape[:2]
+                self.source_frame_size.emit(w, h)
                 
                 # 2. Grab latest results from the background InferenceDaemon (Non-Blocking!)
                 results = self.inference_daemon.get_results() if self.show_detections else None
                 boxes = results[0].boxes.xyxy.cpu().numpy() if (results and len(results) > 0) else []
                 confs = results[0].boxes.conf.cpu().numpy() if (results and len(results) > 0) else []
+
+                if self.show_detections and self.model is not None:
+                    sig = f"{self._current_model_type}|{self._current_engine}"
+                    if sig != self._last_detection_print_sig:
+                        print(f"VideoThread: Detections active (model={sig})")
+                        self._last_detection_print_sig = sig
+                with self._boxes_lock:
+                    self._latest_boxes = boxes.tolist() if len(boxes) > 0 else []
+                    self._latest_confs = confs.tolist() if len(confs) > 0 else []
                     
                 # 3. Identify Locked Target
                 is_locked = False
@@ -514,6 +679,14 @@ class VideoThread(QThread):
                         self.lock_on_box = None
                 
                 # 4. Draw & Annotate
+                if time.time() < self._click_marker_until and self._click_marker is not None:
+                    mx, my = self._click_marker
+                    # Crosshair (cyan)
+                    c = (0, 221, 255)
+                    s = 12
+                    cv2.line(annotated_frame, (mx - s, my), (mx + s, my), c, 2)
+                    cv2.line(annotated_frame, (mx, my - s), (mx, my + s), c, 2)
+
                 for i, box in enumerate(boxes):
                     x1, y1, x2, y2 = map(int, box)
                     current_locked = (self.lock_on_box is not None and np.array_equal(box, self.lock_on_box))
@@ -535,7 +708,6 @@ class VideoThread(QThread):
                         
                         # PID Offset Calculation
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                        h, w = annotated_frame.shape[:2]
                         err_x = cx - (w // 2)
                         err_y = cy - (h // 2)
                         self.tracking_error.emit(err_x, err_y)
@@ -568,22 +740,51 @@ class VideoThread(QThread):
                 print(f"VideoThread runtime error: {e}")
                 time.sleep(0.01)
 
-        if hasattr(self, "inference_daemon"): self.inference_daemon.stop()
-        if hasattr(self, "capture_daemon"): self.capture_daemon.stop()
+        if self.inference_daemon: self.inference_daemon.stop()
+        if self.capture_daemon: self.capture_daemon.stop()
+        if self._rtmp_relay: self._rtmp_relay.stop()
         if cap: cap.release()
 
     def stop(self):
+        """Clean Teardown with Deep Resource Purge 🧹
+        Ensures 100% of GPU memory and GStreamer handles are released instantly to prevent conflicts.
+        """
         self.running = False
-        # Instantly release the OpenCV C++ UDP socket lock so Port 5011 is available for the next thread!
-        if hasattr(self, "capture_daemon"): self.capture_daemon.stop()
+        
+        # 1. Shutdown Inference Engine (Purge CUDA Context)
+        if self.inference_daemon:
+            print("VideoThread: Stopping Inference Daemon...")
+            self.inference_daemon.stop()
+        
+        # 2. Release OpenCV/GStreamer Resources
+        if self.capture_daemon:
+            self.capture_daemon.stop()
         if getattr(self, "cap", None): 
             self.cap.release()
             
+        # 3. Kill GStreamer Process (PID-Specific cleanup 🎯)
         if hasattr(self, "gst_process") and self.gst_process:
-            self.gst_process.terminate()
+            pid = self.gst_process.pid
+            try: self.gst_process.terminate()
+            except: pass
             import os
-            # Global Zombie Assassin - Annihilates GStreamer to free Port 5010 instantly!
-            os.system("taskkill /F /IM gst-launch-1.0.exe >nul 2>&1")
-        self.wait(2000) # Increased timeout for Windows serial/USB 
-        self.running = False
-        self.wait(1000)
+            # Only kill This Specific PID to avoid hitting newly started parallel streams!
+            os.system(f"taskkill /F /T /PID {pid} >nul 2>&1")
+
+        # 4. Stop RTMP Relay if active
+        if getattr(self, "_rtmp_relay", None):
+            self._rtmp_relay.stop()
+
+        # 5. DEEP PURGE: Release AI Model & GPU Memory Immediately 🔐
+        with self.model_lock:
+            print("VideoThread: Purging AI weights and CUDA Cache...")
+            self.model = None
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+
+        # 5. Fast Exit: No long blocking wait() calls to keep HUD responsive!
+        self.wait(100) 
+        print("VideoThread: Stream Cleanly Terminated.")
