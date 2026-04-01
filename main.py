@@ -428,6 +428,9 @@ def main():
             window.tab_video.btn_apply_ai.setEnabled(True)
             window.tab_video.btn_apply_ai.setText("Apply AI Engine Settings")
             window.lbl_status.setText(f"AI Configured: {model_name} on {engine}")
+            
+            # Mission HUD: Rebuild the class filter grid in the Operations Tab 🚀
+            window.tab_ops.refresh_class_filters(model_name)
         except: pass
 
     def on_ai_settings_applied(engine, model_name):
@@ -483,6 +486,7 @@ def main():
     window.tab_ops.chk_show_logs.toggled.connect(window.log_console.setVisible)
     window.tab_video.ai_settings_applied.connect(on_ai_settings_applied)
     window.tab_video.search_prompt_changed.connect(on_search_prompt_changed)
+    window.tab_ops.class_filter_changed.connect(lambda ids: window.video_thread.set_active_classes(ids) if window.video_thread else None)
     
     # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()

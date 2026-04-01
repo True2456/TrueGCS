@@ -47,6 +47,8 @@ class ClickableVideoLabel(QLabel):
 
 
 class OpsTab(QWidget):
+    class_filter_changed = Signal(list)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.map_widget = None
@@ -112,6 +114,7 @@ class OpsTab(QWidget):
         self.combo_tracking_mode.addItem("Click Center Slew", userData="center")
         self.chk_show_logs = QCheckBox("Logs")
         self.chk_show_logs.setChecked(False)
+        
         vid_ctrl_layout2.addWidget(self.chk_enable_det)
         vid_ctrl_layout2.addWidget(self.chk_tracking)
         vid_ctrl_layout2.addWidget(self.combo_tracking_mode)
@@ -146,6 +149,25 @@ class OpsTab(QWidget):
         vid_stack.addWidget(self.video_hud, 0, 0)
         
         vid_layout.addWidget(vid_container)
+
+        self.btn_show_targets = QPushButton("Show Tactical Target Groups")
+        self.btn_show_targets.setCheckable(True)
+        self.btn_show_targets.setObjectName("TacticalButton")
+        self.btn_show_targets.setStyleSheet("QPushButton:checked { background-color: rgba(0, 221, 255, 0.1); color: #00ddff; border-color: #00ddff; }")
+        vid_layout.addWidget(self.btn_show_targets)
+
+        # 1.5. Collapsible Mission Class Filter Section 🚀
+        self.class_box = QGroupBox("Mission Class Filter")
+        self.class_lay = QVBoxLayout(self.class_box)
+        self.class_grid_container = QWidget()
+        self.class_grid = QGridLayout(self.class_grid_container)
+        self.class_lay.addWidget(self.class_grid_container)
+        self.class_box.setVisible(False)
+        vid_layout.addWidget(self.class_box)
+        
+        self.btn_show_targets.toggled.connect(self.class_box.setVisible)
+        # Initialize with default RT-DETR groups 🚀
+        self.refresh_class_filters("RT-DETR")
         
         left_pnl.addWidget(vid_box)
         left_pnl.setStretch(0, 10) # 10:1 stretch for the video panel
@@ -263,3 +285,51 @@ class OpsTab(QWidget):
             self.lbl_tgt_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
         else:
             self.lbl_tgt_status.setStyleSheet("color: #92b0c3;")
+
+    def refresh_class_filters(self, model_type):
+        """Build the tactical filter grid based on the active mission model 🚀"""
+        # Clear existing checkboxes
+        for i in reversed(range(self.class_grid.count())): 
+            self.class_grid.itemAt(i).widget().setParent(None)
+            
+        mt = (model_type or "").upper()
+        self.checkboxes = []
+        
+        if "VISDRONE" in mt or "YOLO26" in mt:
+            self.class_box.setTitle("Recon Targets: VisDrone (10 Classes)")
+            names = ["Pedestrian", "People", "Bicycle", "Car", "Van", "Truck", "Tricycle", "Awning-Tricycle", "Bus", "Motor"]
+            for i, name in enumerate(names):
+                cb = QCheckBox(name)
+                cb.setChecked(True)
+                cb.setProperty("ids", [i])
+                cb.stateChanged.connect(self._emit_class_filter)
+                self.class_grid.addWidget(cb, i // 3, i % 3)
+                self.checkboxes.append(cb)
+        else:
+            self.class_box.setTitle("Recon Targets: RT-DETR (8 Groups)")
+            groups = [
+                ("Humanoid", [0]),
+                ("Two-Wheelers", [1, 3]),
+                ("Standard Vehicles", [2, 7]),
+                ("Aviation/Marine", [4, 8]),
+                ("Nature/Animals", list(range(14, 24))),
+                ("Socio-Furniture", list(range(56, 62))),
+                ("Electronics", list(range(62, 68))),
+                ("Household Items", list(range(68, 80)))
+            ]
+            for i, (name, ids) in enumerate(groups):
+                cb = QCheckBox(name)
+                cb.setChecked(True)
+                cb.setProperty("ids", ids)
+                cb.stateChanged.connect(self._emit_class_filter)
+                self.class_grid.addWidget(cb, i // 3, i % 3)
+                self.checkboxes.append(cb)
+        
+        self._emit_class_filter()
+
+    def _emit_class_filter(self):
+        active_ids = []
+        for cb in self.checkboxes:
+            if cb.isChecked():
+                active_ids.extend(cb.property("ids"))
+        self.class_filter_changed.emit(active_ids)

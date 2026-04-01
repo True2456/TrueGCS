@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QComboBox, QPushButton, QGroupBox, QScrollArea, QFrame, QLineEdit
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QComboBox, QPushButton, QGroupBox, QScrollArea, QFrame, QLineEdit, QCheckBox
 from PySide6.QtCore import Qt, Signal
 
 class VideoTab(QWidget):
@@ -92,6 +92,9 @@ class VideoTab(QWidget):
         model_name = self.model_combo.currentText().split()[0]
         self.ai_settings_applied.emit(engine, model_name)
         
+    def _emit_search_prompt(self):
+        self.search_prompt_changed.emit(self.txt_search_prompt.text())
+
     def _emit_search_prompt(self):
         self.search_prompt_changed.emit(self.txt_search_prompt.text())
 

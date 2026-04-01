@@ -44,6 +44,7 @@ class InferenceDaemon:
         self.latest_frame = None
         self.results = None
         self.pending_prompt = None
+        self.active_class_ids = None # Mission Class Filter ⛓️
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._update, daemon=True)
         self.thread.start()
@@ -80,10 +81,16 @@ class InferenceDaemon:
                                     except Exception as e:
                                         print(f"InferenceDaemon: Failed to set World classes: {e}")
                                         
-                            # Perform detection on the isolated inference thread
-                            # We use a lower threshold (0.25) to ensure mission visibility
-                            # STABILITY UPGRADE: Force imgsz=640 and handle potential RT-DETR predictor mismatches
-                            res = model(frame, verbose=False, half=use_fp16, conf=0.25, imgsz=640)
+                            # Perform detection with tactical class filtering 🏎️
+                            with self.lock:
+                                cls_list = self.active_class_ids
+                            
+                            # TACTICAL BLACKOUT: Skip inference if specifically empty [] 🧱🚀
+                            if cls_list is not None and len(cls_list) == 0:
+                                res = None
+                            else:
+                                res = model(frame, verbose=False, half=use_fp16, conf=0.25, imgsz=640, classes=cls_list)
+                            
                             with self.lock:
                                 self.results = res
                                 num_targets = len(res[0].boxes) if res else 0
@@ -105,6 +112,14 @@ class InferenceDaemon:
     def update_prompt(self, prompt):
         with self.lock:
             self.pending_prompt = prompt
+
+    def update_class_filter(self, ids):
+        with self.lock:
+            # We preserve the list even if empty 🚀
+            # ids=None means "Show All" (Legacy)
+            # ids=[] means "Tactical Blackout" (New)
+            self.active_class_ids = ids
+            print(f"InferenceDaemon: Tactical filter updated -> {self.active_class_ids}")
 
     def update_frame(self, frame):
         with self.lock:
@@ -181,6 +196,7 @@ class VideoThread(QThread):
         self._click_marker = None  # (x, y) in source frame coords
         self._click_marker_until = 0.0
         self._last_detection_print_sig = None
+        self.active_class_ids = None # Pilot's Preference ⛓️
         self.inference_daemon = None
         self.capture_daemon = None
         self.gst_process = None
@@ -486,6 +502,11 @@ class VideoThread(QThread):
         self.tracking_mode = mode_val
         if self.tracking_mode == "none":
             self.set_tracking_point(None, None)
+
+    def set_active_classes(self, ids):
+        self.active_class_ids = ids
+        if self.inference_daemon:
+            self.inference_daemon.update_class_filter(ids)
 
     def handle_click(self, x, y):
         # Always show click feedback cross
