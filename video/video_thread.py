@@ -555,12 +555,12 @@ class VideoThread(QThread):
             self._dynamic_loopback_port = random.randint(15000, 25000)
             
             if is_rtmp:
-                # SPECIALIZED RTMP PIPELINE: Requires flvdemux to strip the DJI container 🎯
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! flvdemux ! h264parse ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                # SPECIALIZED RTMP PIPELINE: Requires parsebin for DJI stability 🎯
+                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             elif getattr(self, "relay_mp", False):
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! queue max-size-buffers=2 ! h264parse ! tee name=t ! queue max-size-buffers=2 ! rtph264pay ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=2 ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! tee name=t ! queue max-size-buffers=3 ! rtph264pay ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=3 ! mpegtsmux alignment=7 ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             else:
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} ! queue max-size-buffers=2 ! h264parse ! mpegtsmux ! queue max-size-buffers=2 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
                 
             print(f"Video Recon: Launching Localhost MPEG-TS Transcoder ->\n{cmd}")
             
@@ -785,6 +785,6 @@ class VideoThread(QThread):
             import gc
             gc.collect()
 
-        # 5. Fast Exit: No long blocking wait() calls to keep HUD responsive!
-        self.wait(100) 
+        # 5. Clean teardown wait for OS/CUDA context 🧱
+        self.wait(500)
         print("VideoThread: Stream Cleanly Terminated.")

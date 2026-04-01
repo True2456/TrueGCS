@@ -7,17 +7,19 @@ from PySide6.QtWidgets import QApplication
 from ui.main_window import GCSMainWindow
 from video.video_thread import VideoThread
 from telemetry.mavlink_thread import TelemetryThread
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QObject, Signal
 from gimbal.mount_tracker import MountTrackerController, MountTrackerConfig
 
+class LogSignaler(QObject):
+    log_ready = Signal(str)
+
 class LogRedirector:
-    def __init__(self, widget):
-        self.widget = widget
+    def __init__(self, signaler):
+        self.signaler = signaler
         self.log_file = open("gcs_crash.log", "w", encoding="utf-8")
     def write(self, text):
-        self.widget.insertPlainText(text)
-        self.widget.ensureCursorVisible()
         try:
+            self.signaler.log_ready.emit(text)
             self.log_file.write(text)
             self.log_file.flush()
         except: pass
@@ -48,11 +50,12 @@ def main():
             except Exception as e:
                 print(f"Mission: Failed to add DLL directory: {e}")
                 
-    if sys.platform == "win32":
-        os.system("taskkill /F /IM gst-launch-1.0.exe >nul 2>&1")
-
     app = QApplication(sys.argv)
     window = GCSMainWindow()
+    
+    window.log_signaler = LogSignaler()
+    window.log_signaler.log_ready.connect(lambda t: [window.log_console.insertPlainText(t), window.log_console.ensureCursorVisible()])
+    sys.stdout = LogRedirector(window.log_signaler); sys.stderr = LogRedirector(window.log_signaler)
 
     global current_ai_engine, current_ai_model
     current_ai_engine = "CPU"
@@ -425,13 +428,6 @@ def main():
             window.tab_video.btn_apply_ai.setEnabled(True)
             window.tab_video.btn_apply_ai.setText("Apply AI Engine Settings")
             window.lbl_status.setText(f"AI Configured: {model_name} on {engine}")
-            
-            # Start the 8-second stability lockout 🛡️
-            # This ensures background taskkills and CUDA purges are 100% finished
-            window.lockout_remaining = 8
-            window.tab_ops.btn_vid_toggle.setEnabled(False)
-            window.tab_ops.btn_vid_toggle.setText(f"Ready in 8s...")
-            window.lockout_timer.start(1000)
         except: pass
 
     def on_ai_settings_applied(engine, model_name):
@@ -464,6 +460,13 @@ def main():
             print("Mission Control: Stopping video feed for clean model transition.")
             toggle_video()
             
+        # Start the 3-second stability lockout 🧱
+        # This ensures background taskkills and CUDA purges are 100% finished during the hotswap
+        window.lockout_remaining = 3
+        window.tab_ops.btn_vid_toggle.setEnabled(False)
+        window.tab_ops.btn_vid_toggle.setText(f"Ready in 3s...")
+        window.lockout_timer.start(1000)
+
         # Reset the "Apply" button state instantly since no live restart will be attempted
         on_ai_ready(engine, model_name)
 
@@ -481,7 +484,7 @@ def main():
     window.tab_video.ai_settings_applied.connect(on_ai_settings_applied)
     window.tab_video.search_prompt_changed.connect(on_search_prompt_changed)
     
-    sys.stdout = LogRedirector(window.log_console); sys.stderr = LogRedirector(window.log_console)
+    # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()
     orig_close = window.closeEvent
     window.closeEvent = lambda e: [n.stop() for n in window.telemetry_nodes.values()] or orig_close(e)
