@@ -99,6 +99,12 @@ class TailsitterSim:
             
     def _update_physics(self, dt):
         if not self.is_armed:
+            # Force absolute zero on all vectors when disarmed 🛰️
+            self.vx = 0.0
+            self.vy = 0.0
+            self.vz = 0.0
+            self.roll = 0.0
+            self.pitch = 0.0
             return
             
         # Basic VTOL Physics for Mission Testing
@@ -171,8 +177,10 @@ class TailsitterSim:
                     # Coordinated Banking (Roll): Proportional to turn rate
                     turn_rate_s = step / dt
                     # INVERTED for GCS HUD Calibration 🛰️
-                    target_roll = - (turn_rate_s * self.drone_cfg["bank_factor"])
-                    self.roll = max(-self.drone_cfg["max_roll_deg"], min(self.drone_cfg["max_roll_deg"], target_roll))
+                    # APPLY LERP (0.1 Alpha) to dampen high-frequency vibration 🛰️
+                    raw_target_roll = - (turn_rate_s * self.drone_cfg["bank_factor"])
+                    raw_target_roll = max(-self.drone_cfg["max_roll_deg"], min(self.drone_cfg["max_roll_deg"], raw_target_roll))
+                    self.roll = (self.roll * 0.9) + (raw_target_roll * 0.1)
                     
                     self.pitch = 0.0 # Level cruise
                     
@@ -205,31 +213,30 @@ class TailsitterSim:
             
             if self.mode in ["CIRCLE", "LOITER"]:
                 # Orbit physics around target_lat/lon 🛰️
-                dist = self._get_distance_metres(self.lat, self.lon, self.target_lat, self.target_lon)
-                radius = 50.0 # Standard loiter radius
-                
-                bearing_to_center = self._get_bearing(self.lat, self.lon, self.target_lat, self.target_lon)
-                bearing_from_center = (bearing_to_center + 180) % 360
-                
-                old_yaw = self.yaw
+                # Vector-Based Proportional Loiter Steering (ArduPilot Grade) 🛰️
+                # Instead of snapping, we aim for a point on the tangent of the loiter circle.
+                target_radius = 50.0 
                 if dist < 5.0:
-                    self.yaw = 0.0
-                elif dist < radius - 5:
-                    # Too close: fly out
-                    self.yaw = bearing_from_center
-                elif dist > radius + 15:
-                    # Too far: fly in
-                    self.yaw = bearing_to_center
+                    # Too close to center: Spiraling out gently toward East/North
+                    self.yaw = (bearing_to_center + 135) % 360
+                elif dist < target_radius - 5:
+                    # Inside the ring: Spiraling out
+                    self.yaw = (bearing_to_center + 135) % 360
+                elif dist > target_radius + 15:
+                    # Outside the ring: Spiraling in
+                    self.yaw = (bearing_to_center + 45) % 360
                 else:
-                    # On the ring: Pure tangent
+                    # On the ring: Pure tangent (Clockwise)
                     self.yaw = (bearing_to_center + 90) % 360
                 
                 # Coordinated Turn Physics for orbits 🛰️
                 yaw_diff = (self.yaw - old_yaw + 180) % 360 - 180
                 turn_rate = yaw_diff / dt
                 # INVERTED for GCS HUD Calibration 🛰️
-                target_roll = - (turn_rate * self.drone_cfg["bank_factor"])
-                self.roll = max(-self.drone_cfg["max_roll_deg"], min(self.drone_cfg["max_roll_deg"], target_roll))
+                # APPLY LERP (0.1 Alpha) to dampen high-frequency vibration 🛰️
+                raw_target_roll = - (turn_rate * self.drone_cfg["bank_factor"])
+                raw_target_roll = max(-self.drone_cfg["max_roll_deg"], min(self.drone_cfg["max_roll_deg"], raw_target_roll))
+                self.roll = (self.roll * 0.9) + (raw_target_roll * 0.1)
             else:
                 self.roll = 0.0 # Level FBWA / Straight Recovery 🛰️
                 self.pitch = 0.0 
