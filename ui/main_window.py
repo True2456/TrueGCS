@@ -109,12 +109,24 @@ class GCSMainWindow(QMainWindow):
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 14px;")
 
+        self.btn_set_mode = QPushButton("SET")
+        self.btn_set_mode.setFixedWidth(50)
+        self.btn_set_mode.setStyleSheet("background-color: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #fff;")
+        
+        # New Arm/Disarm Button 🛰️
+        self.btn_arm = QPushButton("DISARMED")
+        self.btn_arm.setFixedWidth(100)
+        self.btn_arm.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border: 1px solid #ff3232; color: #fff; font-weight: bold;")
+        
         layout.addWidget(QLabel("ACTIVE TARGET:"))
         layout.addWidget(self.combo_target_drone)
         layout.addWidget(self.btn_disconnect_node)
         layout.addSpacing(10)
+        layout.addWidget(self.btn_arm)
+        layout.addSpacing(10)
         layout.addWidget(QLabel("  FLIGHT MODE:"))
         layout.addWidget(self.combo_mode)
+        layout.addWidget(self.btn_set_mode)
         
         layout.addStretch()
         

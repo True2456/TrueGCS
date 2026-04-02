@@ -105,6 +105,12 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   .btn-upload:hover {{ background: #00b8d4; transform: translateY(-1px); }}
   .btn-clear {{ background: transparent; border: 1px solid rgba(146, 176, 195, 0.4); color: #92b0c3; }}
   .btn-clear:hover {{ border-color: #fff; color: #fff; }}
+  
+  .btn-takeoff {{ background: #ffaa00; color: #000; border: none; margin-bottom: 5px; }}
+  .btn-takeoff:hover {{ background: #e69900; transform: translateY(-1px); }}
+  
+  .btn-start {{ background: #00ff00; color: #000; border: none; }}
+  .btn-start:hover {{ background: #00cc00; transform: translateY(-1px); }}
 
   /* Map Controls Styling */
   .leaflet-control-zoom a {{
@@ -145,9 +151,13 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
            <div id="drone-options-popup"></div>
         </div>
     </div>
-    <div style="display: flex; gap: 8px;">
+    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
         <button class="btn-mission btn-clear" onclick="clearMission()">CLEAR</button>
         <button class="btn-mission btn-upload" onclick="uploadMission()">UPLOAD</button>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+        <button class="btn-mission btn-takeoff" onclick="takeoff()">TAKEOFF (50m)</button>
+        <button class="btn-mission btn-start" onclick="startMission()">START MISSION (AUTO)</button>
     </div>
   </div>
 </div>
@@ -312,6 +322,22 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     }}
   }}
 
+  function takeoff() {{
+    if (selectedDroneId === "none") {{
+        alert("Please select target drone.");
+        return;
+    }}
+    if (bridge) bridge.on_takeoff_request(selectedDroneId);
+  }}
+
+  function startMission() {{
+    if (selectedDroneId === "none") {{
+        alert("Please select target drone.");
+        return;
+    }}
+    if (bridge) bridge.on_start_mission_request(selectedDroneId);
+  }}
+
   function setAvailableDrones(dronesJson) {{
     var drones = JSON.parse(dronesJson);
     var popup = document.getElementById('drone-options-popup');
@@ -340,8 +366,17 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
           <path d="M20 6 L28 30 L20 26 L12 30 Z" fill="rgba(0,0,0,0.8)" stroke="${{color_str}}" stroke-width="1.5"/>
       </svg>`;
       trackerDrones[key] = L.marker([lat, lon], {{ icon: L.divIcon({{ html: droneSvg, className: '', iconSize: [34,34], iconAnchor: [17,17] }}) }}).addTo(map);
+      
+      // Context Menu Listener - ATTACH ONCE ONLY 🛰️
+      trackerDrones[key].on('contextmenu', function(e) {{
+        if (bridge) {{
+          bridge.on_drone_context_menu(node_id + ":" + sysid);
+        }}
+        L.DomEvent.stopPropagation(e);
+      }});
     }}
     trackerDrones[key].setLatLng([lat, lon]);
+
     if (heading) {{
        var svg = trackerDrones[key].getElement().querySelector('svg');
        if (svg) svg.style.transform = 'rotate(' + heading + 'deg)';
@@ -354,6 +389,13 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 class MapBridge(QObject):
     mission_upload_requested = Signal(str, str) # target_id, wp_json
     waypoint_requested = Signal(float, float) # lat, lon
+    takeoff_requested = Signal(str) # target_id
+    start_mission_requested = Signal(str) # target_id
+    drone_context_menu_requested = Signal(str) # target_id
+
+    @Slot(str)
+    def on_drone_context_menu(self, target_id):
+        self.drone_context_menu_requested.emit(target_id)
 
     @Slot(float, float)
     def on_map_click(self, lat, lon):
@@ -363,9 +405,20 @@ class MapBridge(QObject):
     def on_mission_upload_request(self, target_id, wp_json):
         self.mission_upload_requested.emit(target_id, wp_json)
 
+    @Slot(str)
+    def on_takeoff_request(self, target_id):
+        self.takeoff_requested.emit(target_id)
+
+    @Slot(str)
+    def on_start_mission_request(self, target_id):
+        self.start_mission_requested.emit(target_id)
+
 class SatelliteMapWidget(QWidget):
     waypoint_requested = Signal(float, float)
     mission_upload_requested = Signal(str, str)
+    takeoff_requested = Signal(str)
+    start_mission_requested = Signal(str)
+    drone_context_menu_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -374,6 +427,9 @@ class SatelliteMapWidget(QWidget):
         self._bridge = MapBridge()
         self._bridge.waypoint_requested.connect(self.waypoint_requested.emit)
         self._bridge.mission_upload_requested.connect(self.mission_upload_requested.emit)
+        self._bridge.takeoff_requested.connect(self.takeoff_requested.emit)
+        self._bridge.start_mission_requested.connect(self.start_mission_requested.emit)
+        self._bridge.drone_context_menu_requested.connect(self.drone_context_menu_requested.emit)
         self._setup_tile_server()
         self._setup_ui()
 

@@ -1,0 +1,26 @@
+{
+    "origin": {
+        "lat": -29.987222,
+        "lon": 153.228056,
+        "alt": 0.0
+    },
+    "drone": {
+        "sysid": 1,
+        "compid": 1,
+        "type": "VTOL_TAILSITTER",
+        "wingspan_m": 1.2,
+        "cruise_speed_ms": 24.0,
+        "min_speed_ms": 15.0,
+        "max_speed_ms": 35.0,
+        "climb_rate_ms": 5.0,
+        "transition_alt_m": 50.0,
+        "max_yaw_rate_deg": 25.0,
+        "max_roll_deg": 45.0,
+        "bank_factor": 1.2
+    },
+    "network": {
+        "gcs_ip": "127.0.0.1",
+        "gcs_port": 14550,
+        "listen_port": 14551
+    }
+}

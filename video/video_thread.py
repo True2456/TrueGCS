@@ -713,19 +713,27 @@ class VideoThread(QThread):
                     current_locked = (self.lock_on_box is not None and np.array_equal(box, self.lock_on_box))
                     
                     if current_locked:
-                        # Tactical Red Brackets
-                        l = 15
-                        cv2.line(annotated_frame, (x1, y1), (x1+l, y1), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x1, y1), (x1, y1+l), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x2, y1), (x2-l, y1), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x2, y1), (x2, y1+l), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x1, y2), (x1+l, y2), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x1, y2), (x1, y2-l), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x2, y2), (x2-l, y2), (0, 0, 255), 3)
-                        cv2.line(annotated_frame, (x2, y2), (x2, y2-l), (0, 0, 255), 3)
+                        # Tactical Red Brackets (LOCKED) 🎯
+                        l = 20 # Longer brackets
+                        c = (0, 0, 255) # Pure Red
+                        t = 2 # Uniform thickness for clean UI
                         
-                        cv2.putText(annotated_frame, f"LOCK - {int(self.lock_on_conf*100)}%", (x1, y1-10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 2)
+                        # Corner brackets
+                        cv2.line(annotated_frame, (x1, y1), (x1+l, y1), c, t)
+                        cv2.line(annotated_frame, (x1, y1), (x1, y1+l), c, t)
+                        cv2.line(annotated_frame, (x2, y1), (x2-l, y1), c, t)
+                        cv2.line(annotated_frame, (x2, y1), (x2, y1+l), c, t)
+                        cv2.line(annotated_frame, (x1, y2), (x1+l, y2), c, t)
+                        cv2.line(annotated_frame, (x1, y2), (x1, y2-l), c, t)
+                        cv2.line(annotated_frame, (x2, y2), (x2-l, y2), c, t)
+                        cv2.line(annotated_frame, (x2, y2), (x2, y2-l), c, t)
+                        
+                        # Label with background for high contrast
+                        label = f"LOCK - {int(self.lock_on_conf*100)}%"
+                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                        cv2.rectangle(annotated_frame, (x1, y1 - th - 15), (x1 + tw, y1 - 5), (0, 0, 0), -1)
+                        cv2.putText(annotated_frame, label, (x1, y1-10), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, c, 1)
                         
                         # PID Offset Calculation
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
@@ -734,8 +742,13 @@ class VideoThread(QThread):
                         self.tracking_error.emit(err_x, err_y)
                         self.target_status.emit("LOCKED", err_x, err_y, self.lock_on_conf)
                     else:
-                        # Emerald Green
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                        # High-Visibility Emerald Green with Shadow 🛰️
+                        shadow_color = (0, 0, 0)
+                        box_color = (0, 255, 0)
+                        # Shadow (1px offset)
+                        cv2.rectangle(annotated_frame, (x1+1, y1+1), (x2+1, y2+1), shadow_color, 1)
+                        # Main Box
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
                 
                 # Global HUD Status Overlay (Tactical Telemetry)
                 if self.hud_status:
