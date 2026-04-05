@@ -120,7 +120,7 @@ class MapHUD(QWidget):
         # Bottom Row: Alt, Speed, Battery (Aligned Left, matching Top Row)
         bot_row = QHBoxLayout()
         self.hud_alt = HUDLabel("Altitude", "m")
-        self.hud_speed = HUDLabel("Grd Speed", "m/s")
+        self.hud_speed = HUDLabel("Air Speed", "m/s")
         self.hud_batt = HUDLabel("Battery", "V")
         
         bot_row.addWidget(self.hud_alt)
@@ -157,3 +157,139 @@ class VideoHUD(QWidget):
 
     def update_attitude(self, roll, pitch):
         self.pfd.update_attitude(roll, pitch)
+
+class SensorDataBlock(QWidget):
+    """A small, high-density data row for the sensor panel."""
+    def __init__(self, label, value="---", color="#00ddff", parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 2, 0, 2)
+        
+        lbl = QLabel(label.upper())
+        lbl.setStyleSheet("color: rgba(146, 176, 195, 0.6); font-size: 8px; font-weight: bold;")
+        
+        self.val = QLabel(value)
+        self.val.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold; font-family: 'Consolas';")
+        self.val.setAlignment(Qt.AlignRight)
+        
+        layout.addWidget(lbl)
+        layout.addStretch()
+        layout.addWidget(self.val)
+
+    def set_value(self, value, color=None):
+        self.val.setText(str(value))
+        if color:
+            self.val.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold; font-family: 'Consolas';")
+
+class SensorPanel(QFrame):
+    """Tactical Slide-out Sensor & Navigation Status Panel 🛰️"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(180)
+        self._gps_active = True # Track state to avoid flickering 🛡️
+        self.setStyleSheet("""
+            QFrame {
+                background-color: rgba(9, 14, 17, 0.9);
+                border-left: 2px solid #00ddff;
+                border-bottom-left-radius: 10px;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        
+        # Header
+        header = QLabel("TACTICAL MONITOR")
+        header.setStyleSheet("color: #00ddff; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
+        layout.addWidget(header)
+        
+        # Section: Avionics
+        layout.addWidget(self._create_separator())
+        self.block_alt_lidar = SensorDataBlock("Lidar (SF20)")
+        self.block_airspeed = SensorDataBlock("Airspeed")
+        self.block_gps_stat = SensorDataBlock("GPS Status", "ACTIVE", "#00ff78")
+        
+        layout.addWidget(self.block_alt_lidar)
+        layout.addWidget(self.block_airspeed)
+        layout.addWidget(self.block_gps_stat)
+        
+        # Section: TRN Diagnostics 🛰️
+        trn_header = QLabel("TRN / NAVIGATION")
+        trn_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
+        layout.addWidget(trn_header)
+        layout.addWidget(self._create_separator())
+        
+        self.block_gps2_fix = SensorDataBlock("GPS2 Fix", "---")
+        self.block_gps2_hdop = SensorDataBlock("PSR Conf", "---")
+        self.block_ekf_pos = SensorDataBlock("EKF Health", "WAIT", "#ffaa00")
+        self.block_wp_dist = SensorDataBlock("Target Dist", "0 m")
+        
+        layout.addWidget(self.block_gps2_fix)
+        layout.addWidget(self.block_gps2_hdop)
+        layout.addWidget(self.block_ekf_pos)
+        layout.addWidget(self.block_wp_dist)
+
+        # Section: Visual Navigation
+        vnav_header = QLabel("VISUAL LOCK")
+        vnav_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
+        layout.addWidget(vnav_header)
+        layout.addWidget(self._create_separator())
+        
+        self.block_viz_lock = SensorDataBlock("State", "SEARCHING", "#92b0c3")
+        self.block_viz_conf = SensorDataBlock("Confidence", "0%")
+        self.block_viz_offset = SensorDataBlock("Px Offset", "0, 0")
+        
+        layout.addWidget(self.block_viz_lock)
+        layout.addWidget(self.block_viz_conf)
+        layout.addWidget(self.block_viz_offset)
+        
+        layout.addStretch()
+        
+        # Footer: Active ID
+        self.lbl_active_id = QLabel("NODE: ---")
+        self.lbl_active_id.setStyleSheet("color: rgba(0, 221, 255, 0.4); font-size: 8px; font-family: 'Consolas';")
+        self.lbl_active_id.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.lbl_active_id)
+
+    def _create_separator(self):
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); max-height: 1px;")
+        return line
+
+    def update_sensors(self, lidar_alt=None, airspeed=None, gps_active=None):
+        if lidar_alt is not None: self.block_alt_lidar.set_value(f"{lidar_alt:.2f} m")
+        if airspeed is not None: self.block_airspeed.set_value(f"{airspeed:.1f} m/s")
+        
+        # Only update label if state explicitly changed OR on first init 🛡️
+        if gps_active is not None:
+             self._gps_active = gps_active
+
+        status = "ACTIVE" if self._gps_active else "LOST/DENIED"
+        color = "#00ff78" if self._gps_active else "#ff3232"
+        self.block_gps_stat.set_value(status, color)
+
+    def update_trn(self, fix_type=None, hdop=None, ekf_flags=None):
+        if fix_type is not None:
+            self.block_gps2_fix.set_value(f"{fix_type} (3D)" if fix_type >= 3 else f"{fix_type} (None)")
+        if hdop is not None:
+            # Map HDOP back to a readable PSR "Quality" or just show HDOP 🛰️
+            self.block_gps2_hdop.set_value(f"{hdop:.2f}")
+        if ekf_flags is not None:
+            # Check Bit 3 (val 8): EKF_POS_HORIZ_ABS
+            ok = (ekf_flags & 8) != 0
+            self.block_ekf_pos.set_value("PASS" if ok else "FAIL", "#00ff78" if ok else "#ff3232")
+
+    def update_nav(self, wp_dist=None):
+        if wp_dist is not None:
+            self.block_wp_dist.set_value(f"{int(wp_dist)} m")
+
+    def update_vision(self, status, conf, off_x, off_y):
+        color = "#00ff78" if status == "LOCKED" else ("#ffaa00" if status == "LOST" else "#92b0c3")
+        self.block_viz_lock.set_value(status, color)
+        self.block_viz_conf.set_value(f"{int(conf*100)}%")
+        self.block_viz_offset.set_value(f"{off_x}, {off_y}")
+
+    def set_active_node(self, node_name):
+        self.lbl_active_id.setText(f"ACTIVE NODE: {node_name}")

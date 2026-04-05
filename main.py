@@ -68,8 +68,11 @@ def main():
     
     # ---- GLOBAL NODE MANAGER ----
     window.telemetry_nodes = {}
+    window.drone_headings = {}
+    window.drone_armed = {} # { "nid:sid": bool } 🛰️
     node_colors = ['#00ddff', '#ff3366', '#33ff55', '#ffaa00', '#aa00ff', '#ffffff']
     node_counter = [0]
+    VTOL_MODES = ["STABILIZE", "FBWA", "AUTO", "QLOITER", "QHOVER", "QRTL", "LOITER", "TAKEOFF", "TRANSITION", "CIRCLE", "RTL", "QLAND"]
 
     def get_active_target():
         data = window.combo_target_drone.currentData()
@@ -130,27 +133,59 @@ def main():
     def r_hud_updated(n_id, s_id, speed, batt, alt, mode):
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
-            window.tab_ops.map_hud.update_telemetry(speed=speed if speed > -1 else None, batt=batt if batt > -1 else None, alt=alt if alt > -1 else None, mode=mode)
+            # Clean mode display with persistence guard 🛰️
+            if mode:
+                window.tab_ops.map_hud.update_telemetry(speed=speed if speed > -1 else None, batt=batt if batt > -1 else None, alt=alt if alt > -1 else None, mode=mode)
+            else:
+                window.tab_ops.map_hud.update_telemetry(speed=speed if speed > -1 else None, batt=batt if batt > -1 else None, alt=alt if alt > -1 else None)
+            
+            # Sync to Sensor Side-Panel 🛰️
+            window.tab_ops.sensor_panel.update_sensors(airspeed=speed if speed > -1 else None, gps_active=window.tab_ops.chk_gps_enabled.isChecked())
+            
+            # Sync the top-bar dropdown if the mode changed (Clean name only) 🛰️
+            if mode and mode != "UNKNOWN":
+                if not window.combo_mode.hasFocus() and not window.combo_mode.view().isVisible():
+                    window.combo_mode.blockSignals(True)
+                    window.combo_mode.setCurrentText(mode)
+                    window.combo_mode.blockSignals(False)
+
+    def r_distance_updated(n_id, s_id, dist_m):
+        an, as_id = get_active_target()
+        if n_id == an and s_id == as_id:
+            window.tab_ops.sensor_panel.update_sensors(lidar_alt=dist_m)
+
+    def r_gps2_updated(n_id, s_id, fix, hdop):
+        an, as_id = get_active_target()
+        if n_id == an and s_id == as_id:
+            window.tab_ops.sensor_panel.update_trn(fix_type=fix, hdop=hdop)
+
+    def r_ekf_status_updated(n_id, s_id, flags):
+        an, as_id = get_active_target()
+        if n_id == an and s_id == as_id:
+            window.tab_ops.sensor_panel.update_trn(ekf_flags=flags)
+
+    def r_nav_updated(n_id, s_id, wp_dist):
+        an, as_id = get_active_target()
+        if n_id == an and s_id == as_id:
+            window.tab_ops.sensor_panel.update_nav(wp_dist=wp_dist)
 
     def r_attitude_updated(n_id, s_id, roll, pitch, yaw):
+        window.drone_headings[f"{n_id}:{s_id}"] = yaw
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
             window.tab_ops.update_attitude(roll, pitch, yaw)
 
     def r_position_updated(n_id, s_id, lat, lon, alt):
-        # Guard against invalid GPS values to avoid noisy console/JS errors.
-        if lat is None or lon is None:
+        if lat is None or lon is None or not math.isfinite(lat) or not math.isfinite(lon) or abs(lat) > 90.0 or abs(lon) > 180.0:
             return
-        if not math.isfinite(lat) or not math.isfinite(lon):
-            return
-        if abs(lat) > 90.0 or abs(lon) > 180.0:
-            return
-
         color = window.telemetry_nodes[n_id].color if n_id in window.telemetry_nodes else "#ffffff"
-        window.tab_ops.map_widget.update_drone_position(n_id, s_id, lat, lon, None, color)
+        heading = window.drone_headings.get(f"{n_id}:{s_id}", 0.0)
+        window.tab_ops.map_widget.update_drone_position(n_id, s_id, lat, lon, heading, color)
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
             window.tab_ops.update_position(lat, lon, alt)
+            # Sync to Sensor Side-Panel 🛰️
+            window.tab_ops.sensor_panel.update_sensors(gps_active=window.tab_ops.chk_gps_enabled.isChecked())
 
     def r_status_text(n_id, s_id, txt):
         an, as_id = get_active_target()
@@ -175,12 +210,41 @@ def main():
     def r_modes_avail(n_id, s_id, modes):
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
-            window.populate_flight_modes(modes)
+            valid_modes = [m for m in modes if m]
+            if valid_modes:
+                window.populate_flight_modes(valid_modes)
+            else:
+                window.populate_flight_modes(VTOL_MODES)
+
+    def r_armed_status(n_id, s_id, is_armed):
+        window.drone_armed[f"{n_id}:{s_id}"] = is_armed
+        an, as_id = get_active_target()
+        if n_id == an and s_id == as_id:
+            if is_armed:
+                window.btn_arm.setText("ARMED")
+                window.btn_arm.setStyleSheet("background-color: rgba(0, 255, 0, 0.15); border: 1px solid #00ff00; color: #fff; font-weight: bold;")
+            else:
+                window.btn_arm.setText("DISARMED")
+                window.btn_arm.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border: 1px solid #ff3232; color: #fff; font-weight: bold;")
+        r_hud_updated(n_id, s_id, -1, -1, -1, window.telemetry_nodes[n_id]._last_mode.get(s_id, ""))
+
+    def on_arm_clicked():
+        an, as_id = get_active_target()
+        if not an: return
+        tel = window.telemetry_nodes.get(an)
+        if tel:
+            currently_armed = window.drone_armed.get(f"{an}:{as_id}", False)
+            print(f"Commander: {'DISARMING' if currently_armed else 'ARMING'} Drone {as_id}")
+            tel.arm(as_id, not currently_armed)
 
     def connect_telemetry_signals(tel):
         tel.signals.drone_discovered.connect(r_drone_discovered)
         tel.signals.drone_lost.connect(r_drone_lost)
         tel.signals.hud_updated.connect(r_hud_updated)
+        tel.signals.distance_sensor_updated.connect(r_distance_updated)
+        tel.signals.gps2_updated.connect(r_gps2_updated)
+        tel.signals.ekf_status_updated.connect(r_ekf_status_updated)
+        tel.signals.nav_updated.connect(r_nav_updated)
         tel.signals.attitude_updated.connect(r_attitude_updated)
         tel.signals.position_updated.connect(r_position_updated)
         tel.signals.status_text_updated.connect(r_status_text)
@@ -188,6 +252,7 @@ def main():
         tel.signals.parameters_loaded.connect(r_param_loaded)
         tel.signals.parameter_progress.connect(r_param_prog)
         tel.signals.modes_available.connect(r_modes_avail)
+        tel.signals.armed_status_changed.connect(r_armed_status)
 
     # ---- NODE MANAGEMENT ----
     def add_new_node():
@@ -238,7 +303,6 @@ def main():
     def handle_mission_upload_request(target_id, wp_json):
         try:
             wps = json.loads(wp_json)
-            # target_id is "node_id:sysid"
             if ":" not in target_id: return
             nid, sid = map(int, target_id.split(":"))
             
@@ -246,16 +310,53 @@ def main():
                 window.telemetry_nodes[nid].upload_mission(sid, wps)
                 window.lbl_status.setText(f"Mission: Uploading {len(wps)} points to Drone {sid}...")
                 window.lbl_status.setStyleSheet("color: #00ddff; font-weight: bold;")
-            else:
-                print(f"Mission: Node {nid} not found for upload.")
         except Exception as e:
             print(f"Mission Upload Error: {e}")
 
-    # ---- TX COMMAND ROUTERS ----
+    def handle_takeoff_request(target_id):
+        if ":" not in target_id: return
+        try:
+            nid, sid = map(int, target_id.split(":"))
+            if nid in window.telemetry_nodes:
+                window.telemetry_nodes[nid].send_takeoff(sid, alt=50.0)
+                window.lbl_status.setText(f"Mission: Initiating Takeoff (50m) for Drone {sid}...")
+                window.lbl_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
+        except Exception as e:
+            print(f"Takeoff Command Error: {e}")
+
+    def handle_start_mission_request(target_id):
+        if ":" not in target_id: return
+        try:
+            nid, sid = map(int, target_id.split(":"))
+            if nid in window.telemetry_nodes:
+                window.telemetry_nodes[nid].start_mission(sid)
+                window.lbl_status.setText(f"Mission: Starting Autonomous Path for Drone {sid}...")
+                window.lbl_status.setStyleSheet("color: #00ff00; font-weight: bold;")
+        except Exception as e:
+            print(f"Start Mission Error: {e}")
+
+    def on_gps_toggled(checked):
+        an, as_id = get_active_target()
+        if not an: return
+        tel = window.telemetry_nodes.get(an)
+        if tel:
+            tel.set_gps_enabled(checked, is_gps2=False)
+
+    def on_gps2_toggled(checked):
+        an, as_id = get_active_target()
+        if not an: return
+        tel = window.telemetry_nodes.get(an)
+        if tel:
+            tel.set_gps_enabled(checked, is_gps2=True)
+            
+    window.tab_ops.chk_gps_enabled.toggled.connect(on_gps_toggled)
+    window.tab_ops.chk_gps2_enabled.toggled.connect(on_gps2_toggled)
     window.btn_add_node.clicked.connect(add_new_node)
     window.btn_disconnect_node.clicked.connect(disconnect_active_node)
     window.tab_ops.map_widget.waypoint_requested.connect(lambda lat, lon: window.telemetry_nodes[get_active_target()[0]].set_waypoint(get_active_target()[1], lat, lon) if get_active_target()[0] is not None else None)
     window.tab_ops.map_widget.mission_upload_requested.connect(handle_mission_upload_request)
+    window.tab_ops.map_widget.takeoff_requested.connect(handle_takeoff_request)
+    window.tab_ops.map_widget.start_mission_requested.connect(handle_start_mission_request)
 
     
     window.tab_cfg.write_param_requested.connect(lambda p, v: window.telemetry_nodes[get_active_target()[0]].set_parameter(get_active_target()[1], p, v) if get_active_target()[0] is not None else None)
@@ -267,6 +368,9 @@ def main():
     def on_active_drone_changed(index):
         an, as_id = get_active_target()
         if an is not None and an in window.telemetry_nodes:
+            # Sync to Sensor Side-Panel 🛰️
+            window.tab_ops.sensor_panel.set_active_node(f"NODE {an} (ID:{as_id})")
+            
             tel = window.telemetry_nodes[an]
             window.tab_cfg.table_params.setRowCount(0)
             for p_id, p_val in tel.parameters.get(as_id, {}).items():
@@ -317,6 +421,7 @@ def main():
             window.tab_ops.video_label.video_thread = window.video_thread
             window.video_thread.frame_ready.connect(window.update_video_frame)
             window.video_thread.target_status.connect(window.tab_ops.update_target_status)
+            window.video_thread.target_status.connect(lambda s, ox, oy, c: window.tab_ops.sensor_panel.update_vision(s, c, ox, oy))
             window.video_thread.source_frame_size.connect(window.tab_ops.video_label.set_source_frame_size)
             window.video_thread.tracking_error.connect(on_tracking_error)
             window.video_thread.ai_ready.connect(on_ai_ready)
@@ -488,6 +593,95 @@ def main():
     window.tab_video.search_prompt_changed.connect(on_search_prompt_changed)
     window.tab_ops.class_filter_changed.connect(lambda ids: window.video_thread.set_active_classes(ids) if window.video_thread else None)
     
+    # ---- MISSION PLANNER INTEGRATION ----
+    # ---- FLIGHT MODE & CONTEXT MENU INTEGRATION ----
+    
+    def parse_target(tid):
+        if not tid: return None, None
+        if isinstance(tid, dict):
+            return tid.get('node_id'), tid.get('sysid')
+        if isinstance(tid, str) and ":" in tid:
+            nid, sid = tid.split(":")
+            return int(nid), int(sid)
+        return None, None
+
+    def apply_mode_change(target_id, mode_name):
+        nid, sid = parse_target(target_id)
+        if nid is None: return
+        tel = window.telemetry_nodes.get(nid)
+        if tel:
+            print(f"Mission: Setting Drone {sid} to MODE: {mode_name}")
+            tel.set_flight_mode(sid, mode_name)
+
+    def on_set_mode_clicked():
+        import json
+        target_id = window.combo_target_drone.currentData()
+        if not target_id: return
+        mode_name = window.combo_mode.currentText()
+        apply_mode_change(target_id, mode_name)
+
+    def on_drone_context_menu(target_id):
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction, QCursor
+        
+        nid, sid = parse_target(target_id)
+        menu = QMenu(window)
+        menu.setTitle(f"Tactical Drone {sid}")
+        menu.setStyleSheet("background-color: #09151c; color: #00ddff; border: 1px solid #111a22; padding: 5px;")
+        
+        # Mode Section
+        mode_menu = menu.addMenu("Set Mode")
+        for mode in VTOL_MODES:
+            action = mode_menu.addAction(mode)
+            # Use non-lambda capturing or pass mode as argument to avoid closure issues
+            def trigger_factory(target=target_id, m=mode):
+                return lambda: apply_mode_change(target, m)
+            action.triggered.connect(trigger_factory())
+            
+        menu.addSeparator()
+        
+        # Action Section
+        arm_action = menu.addAction("ARM DRONE")
+        arm_action.triggered.connect(lambda: window.telemetry_nodes[nid].arm(sid, True) if nid in window.telemetry_nodes else None)
+        
+        disarm_action = menu.addAction("DISARM DRONE")
+        disarm_action.triggered.connect(lambda: window.telemetry_nodes[nid].arm(sid, False) if nid in window.telemetry_nodes else None)
+        
+        menu.exec(QCursor.pos())
+
+    # Mission Planner Handlers
+    def on_takeoff(target_id):
+        nid, sid = parse_target(target_id)
+        tel = window.telemetry_nodes.get(nid)
+        if tel:
+            print(f"Mission: Executing AUTO-ARM and TAKEOFF for Drone {sid}")
+            tel.arm(sid, True)
+            time.sleep(0.1)
+            tel.send_takeoff(sid, 50.0)
+
+    def on_start_mission(target_id):
+        nid, sid = parse_target(target_id)
+        tel = window.telemetry_nodes.get(nid)
+        if tel: tel.start_mission(sid)
+
+    def on_mission_upload(target_id, wp_json):
+        import json
+        nid, sid = parse_target(target_id)
+        tel = window.telemetry_nodes.get(nid)
+        if tel:
+            wps = json.loads(wp_json)
+            tel.upload_mission(sid, wps)
+
+    # Initial population and signals
+    window.populate_flight_modes(VTOL_MODES)
+    window.btn_set_mode.clicked.connect(on_set_mode_clicked)
+    window.btn_arm.clicked.connect(on_arm_clicked)
+    window.tab_ops.map_widget.drone_context_menu_requested.connect(on_drone_context_menu)
+    
+    window.tab_ops.map_widget.takeoff_requested.connect(on_takeoff)
+    window.tab_ops.map_widget.start_mission_requested.connect(on_start_mission)
+    window.tab_ops.map_widget.mission_upload_requested.connect(on_mission_upload)
+
     # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()
     orig_close = window.closeEvent

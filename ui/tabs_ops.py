@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGri
 from PySide6.QtCore import Qt, Signal
 
 from ui.map_widget import SatelliteMapWidget
-from ui.hud_overlay import MapHUD, VideoHUD
+from ui.hud_overlay import MapHUD, VideoHUD, SensorPanel
 
 
 class ClickableVideoLabel(QLabel):
@@ -53,6 +53,7 @@ class OpsTab(QWidget):
         super().__init__(parent)
         self.map_widget = None
         self.map_hud = None
+        self.sensor_panel = None
         self.video_hud = None
         self._last_yaw = 0.0
         self.setup_ui()
@@ -107,6 +108,13 @@ class OpsTab(QWidget):
         self.chk_enable_det.setChecked(False)
         self.chk_tracking = QCheckBox("Track")
         self.chk_tracking.setChecked(False)
+        
+        # Navigation Toggles 🛰️ (Independent Dual-GPS Sim)
+        self.chk_gps_enabled = QCheckBox("GPS") 
+        self.chk_gps_enabled.setChecked(True)
+        self.chk_gps2_enabled = QCheckBox("GPS2 / TRN")
+        self.chk_gps2_enabled.setChecked(True)
+        
         self.combo_tracking_mode = QComboBox()
         self.combo_tracking_mode.addItem("No Tracking", userData="none")
         self.combo_tracking_mode.addItem("Click Nearest Detection", userData="nearest")
@@ -117,6 +125,8 @@ class OpsTab(QWidget):
         
         vid_ctrl_layout2.addWidget(self.chk_enable_det)
         vid_ctrl_layout2.addWidget(self.chk_tracking)
+        vid_ctrl_layout2.addWidget(self.chk_gps_enabled)
+        vid_ctrl_layout2.addWidget(self.chk_gps2_enabled)
         vid_ctrl_layout2.addWidget(self.combo_tracking_mode)
         vid_ctrl_layout2.addWidget(self.chk_show_logs)
         vid_ctrl_layout2.addStretch()
@@ -221,9 +231,36 @@ class OpsTab(QWidget):
         
         self.map_widget = SatelliteMapWidget()
         self.map_hud = MapHUD()
+        self.sensor_panel = SensorPanel()
+        self.sensor_panel.setVisible(False)
         
         map_grid.addWidget(self.map_widget, 0, 0)
-        map_grid.addWidget(self.map_hud, 0, 0) # Overlay on same cell
+        map_grid.addWidget(self.map_hud, 0, 0)
+        
+        # Sensor Panel Alignment (Right Side)
+        map_grid.addWidget(self.sensor_panel, 0, 0, Qt.AlignRight | Qt.AlignTop)
+        
+        # Sensor Toggle Button (Floating on Map)
+        self.btn_toggle_sensors = QPushButton("SENSORS")
+        self.btn_toggle_sensors.setCheckable(True)
+        self.btn_toggle_sensors.setFixedSize(70, 24)
+        self.btn_toggle_sensors.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(9, 14, 17, 0.8);
+                color: #92b0c3;
+                border: 1px solid rgba(0, 221, 255, 0.3);
+                font-size: 9px;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:checked {
+                background-color: #00ddff;
+                color: #090e11;
+                border: 1px solid #00ddff;
+            }
+        """)
+        self.btn_toggle_sensors.toggled.connect(self.sensor_panel.setVisible)
+        map_grid.addWidget(self.btn_toggle_sensors, 0, 0, Qt.AlignRight | Qt.AlignBottom)
         
         splitter.addWidget(map_container)
         
