@@ -4,6 +4,8 @@ from PySide6.QtCore import Qt, Signal
 class VideoTab(QWidget):
     ai_settings_applied = Signal(str, str) # Atomic Engine config (engine, model) 🔐
     search_prompt_changed = Signal(str)
+    labels_toggled = Signal(bool)
+    box_color_changed = Signal(tuple)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,6 +82,23 @@ class VideoTab(QWidget):
         # Potential future settings like resolution scale, FPS limit, etc.
         vid_grid.addWidget(QLabel("Decryption / Codec:"), 0, 0)
         vid_grid.addWidget(QLabel("H.264 (Native)"), 0, 1)
+        
+        vid_grid.addWidget(QLabel("Box HUD Color:"), 1, 0)
+        self.combo_box_color = QComboBox()
+        self.combo_box_color.addItem("Emerald Green", userData=(0, 255, 0))
+        self.combo_box_color.addItem("Neon Blue", userData=(255, 221, 0))
+        self.combo_box_color.addItem("Hot Pink", userData=(180, 105, 255))
+        self.combo_box_color.addItem("Safety Orange", userData=(0, 165, 255))
+        self.combo_box_color.addItem("Tactical White", userData=(255, 255, 255))
+        self.combo_box_color.currentIndexChanged.connect(self._handle_color_change)
+        vid_grid.addWidget(self.combo_box_color, 1, 1)
+
+        self.chk_show_labels = QCheckBox("Show Labels & Confidence on HUD")
+        self.chk_show_labels.setChecked(True)
+        self.chk_show_labels.setStyleSheet("color: #00ddff; font-weight: bold;")
+        self.chk_show_labels.toggled.connect(lambda state: self.labels_toggled.emit(state))
+        vid_grid.addWidget(self.chk_show_labels, 2, 0, 1, 2)
+        
         vid_lay.addLayout(vid_grid)
         
         container_layout.addWidget(vid_box)
@@ -103,3 +122,7 @@ class VideoTab(QWidget):
         # Only YOLO-World exposes the dynamic search prompt
         self.lbl_search_prompt.setVisible(is_world)
         self.txt_search_prompt.setVisible(is_world)
+
+    def _handle_color_change(self, index):
+        color_bgr = self.combo_box_color.currentData()
+        self.box_color_changed.emit(color_bgr)

@@ -106,13 +106,28 @@ class InferenceDaemon:
                                     conf_val = self.active_conf
                                 res = model(frame, verbose=False, half=use_fp16, conf=conf_val, imgsz=640, classes=cls_list)
                             
+                            self.idle_event.clear() # Engaging calculations 🏎️
+                                
+                            if res and len(res) > 0:
+                                # Pre-extract all data to CPU numpy arrays OUTSIDE the lock 🏎️
+                                # This ensures the UI thread never blocks on GPU syncs
+                                pkt = {
+                                    'boxes': res[0].boxes.xyxy.cpu().numpy(),
+                                    'confs': res[0].boxes.conf.cpu().numpy(),
+                                    'cls': res[0].boxes.cls.cpu().numpy(),
+                                    'names': res[0].names
+                                }
+                            else:
+                                pkt = None
+
                             with self.lock:
                                 self._frames_completed += 1 # Internal throughput counter 📈
-                                self.results = res
+                                self.results = pkt
                                 self.results_timestamp = ts
-                                num_targets = len(res[0].boxes) if res else 0
-                                if num_targets > 0:
-                                    print(f"InferenceDaemon: Detected {num_targets} targets.")
+                                if pkt:
+                                    num_targets = len(pkt['boxes'])
+                                    if num_targets > 0:
+                                        print(f"InferenceDaemon: Detected {num_targets} targets.")
                         except Exception as e:
                             print(f"InferenceDaemon CRITICAL: {e}")
                             import traceback
@@ -216,6 +231,8 @@ class VideoThread(QThread):
         self._click_marker_until = 0.0
         self._last_detection_print_sig = None
         self.active_class_ids = None # Pilot's Preference ⛓️
+        self.show_labels = True # Toggleable via UI 🏷️
+        self.box_color = (0, 255, 0) # Emerald Green (BGR) 🛰️
         self.inference_daemon = None
         self.capture_daemon = None
         self.gst_process = None
@@ -244,6 +261,16 @@ class VideoThread(QThread):
         """Public signal receiver to toggle AI HUD visibility."""
         self.show_detections = bool(state)
         print(f"VideoThread: set_show_detections={self.show_detections}")
+
+    def set_show_labels(self, state):
+        """Toggle the visibility of class labels and confidence scores."""
+        self.show_labels = bool(state)
+        print(f"VideoThread: set_show_labels={self.show_labels}")
+
+    def set_box_color(self, bgr_tuple):
+        """Update the bounding box color."""
+        self.box_color = bgr_tuple
+        print(f"VideoThread: set_box_color={self.box_color}")
 
     def set_ai_config(self, engine, model_type):
         """Atomic mission configuration 🔐"""
@@ -752,16 +779,16 @@ class VideoThread(QThread):
                     display_ts, target_frame = self.frame_history[0]
                 
                 # NEAREST-PAST MATCHING: Always show boxes on the best possible frame 🎯
-                current_res = None
+                current_pkt = None
                 if results is not None and res_ts is not None:
-                    # If AI result is from the PAST (older than display head), it's valid for this frame
-                    # We keep showing the 'latest' AI result that came BEFORE this frame
-                    if res_ts <= display_ts + 0.01: # Slight epsilon for floating point precision
-                        current_res = results
+                    if res_ts <= display_ts + 0.01:
+                        current_pkt = results # This is now our optimized numpy packet
                 
                 annotated_frame = target_frame.copy()
-                boxes = current_res[0].boxes.xyxy.cpu().numpy() if (current_res and len(current_res) > 0) else []
-                confs = current_res[0].boxes.conf.cpu().numpy() if (current_res and len(current_res) > 0) else []
+                boxes = current_pkt['boxes'] if current_pkt else []
+                confs = current_pkt['confs'] if current_pkt else []
+                cls_ids = current_pkt['cls'] if current_pkt else []
+                names_map = current_pkt['names'] if current_pkt else {}
 
                 if self.show_detections and self.model is not None:
                     sig = f"{self._current_model_type}|{self._current_engine}"
@@ -771,6 +798,7 @@ class VideoThread(QThread):
                 with self._boxes_lock:
                     self._latest_boxes = boxes.tolist() if len(boxes) > 0 else []
                     self._latest_confs = confs.tolist() if len(confs) > 0 else []
+                    self._latest_cls = cls_ids.tolist() if len(cls_ids) > 0 else []
                     
                 # 3. Identify Locked Target
                 is_locked = False
@@ -840,13 +868,29 @@ class VideoThread(QThread):
                         self.tracking_error.emit(err_x, err_y)
                         self.target_status.emit("LOCKED", err_x, err_y, self.lock_on_conf)
                     else:
-                        # High-Visibility Emerald Green with Shadow 🛰️
+                        # User-Defined HUD Color with Shadow 🛰️
                         shadow_color = (0, 0, 0)
-                        box_color = (0, 255, 0)
+                        box_color = self.box_color
                         # Shadow (1px offset)
                         cv2.rectangle(annotated_frame, (x1+1, y1+1), (x2+1, y2+1), shadow_color, 1, cv2.LINE_AA)
                         # Main Box with Anti-Aliasing for reconnaissance clarity 🚀
                         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, t_scale, cv2.LINE_AA)
+
+                        if self.show_labels:
+                            try:
+                                cls_id = int(cls_ids[i])
+                                # Lookup class name from our pre-extracted names map
+                                cls_name = names_map.get(cls_id, f"ID:{cls_id}")
+                                conf = int(confs[i] * 100)
+                                label = f"{cls_name.upper()} {conf}%"
+                                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, f_scale*0.7, t_scale)
+                                # Label Background (Black semi-trans)
+                                cv2.rectangle(annotated_frame, (x1, y1 - th - 5), (x1 + tw, y1), (0, 0, 0), -1)
+                                # Label Text
+                                cv2.putText(annotated_frame, label, (x1, y1 - 5), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, f_scale*0.7, box_color, t_scale, cv2.LINE_AA)
+                            except:
+                                pass
                 
                 # 5. Performance Diagnostics (Calculate FPS every 1s) 📈
                 self._frames_drawn += 1

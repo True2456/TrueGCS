@@ -26,14 +26,32 @@ class LogRedirector:
     def flush(self): pass
 
 def find_gstreamer():
-    common_paths = [
-        r"C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe",
-        r"C:\gstreamer\1.0\x86_64\bin\gst-launch-1.0.exe",
-        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), r"gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe")
-    ]
-    for p in common_paths:
-        if os.path.exists(p): return p
-    return "gst-launch-1.0.exe"
+    import sys, os
+    if sys.platform == "darwin":
+        # macOS — check Homebrew locations (Apple Silicon first, then Intel)
+        mac_paths = [
+            "/opt/homebrew/bin/gst-launch-1.0",          # Apple Silicon (M1/M2/M3)
+            "/usr/local/bin/gst-launch-1.0",              # Intel Mac via Homebrew
+            "/opt/local/bin/gst-launch-1.0",              # MacPorts fallback
+        ]
+        for p in mac_paths:
+            if os.path.exists(p): return p
+        return "gst-launch-1.0"  # Assume it's on PATH
+    elif sys.platform.startswith("linux"):
+        linux_paths = ["/usr/bin/gst-launch-1.0", "/usr/local/bin/gst-launch-1.0"]
+        for p in linux_paths:
+            if os.path.exists(p): return p
+        return "gst-launch-1.0"
+    else:
+        # Windows
+        common_paths = [
+            r"C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe",
+            r"C:\gstreamer\1.0\x86_64\bin\gst-launch-1.0.exe",
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), r"gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe")
+        ]
+        for p in common_paths:
+            if os.path.exists(p): return p
+        return "gst-launch-1.0.exe"
 
 def main():
     if sys.platform == "win32":
@@ -436,6 +454,10 @@ def main():
             window.video_thread.ai_diag_updated.connect(window.tab_ops.sensor_panel.update_ai_diagnostics)
             window.video_thread.start()
             window.video_thread.set_show_detections(window.tab_ops.chk_enable_det.isChecked())
+            window.video_thread.set_show_labels(window.tab_video.chk_show_labels.isChecked())
+            window.video_thread.set_box_color(window.tab_video.combo_box_color.currentData())
+            window.tab_video.labels_toggled.connect(window.video_thread.set_show_labels)
+            window.tab_video.box_color_changed.connect(window.video_thread.set_box_color)
             window.video_thread.set_tracking_mode(window.tab_ops.combo_tracking_mode.currentData())
             window.mount_tracker.set_enabled(window.tab_ops.chk_tracking.isChecked() and window.tab_ops.combo_tracking_mode.currentData() != "none")
             window.tab_ops.btn_vid_toggle.setText("Stop Video")
