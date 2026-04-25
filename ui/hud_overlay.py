@@ -244,6 +244,20 @@ class SensorPanel(QFrame):
         layout.addWidget(self.block_viz_conf)
         layout.addWidget(self.block_viz_offset)
         
+        # Section: AI Reconnaissance 🚀
+        ai_header = QLabel("AI RECONNAISSANCE")
+        ai_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
+        layout.addWidget(ai_header)
+        layout.addWidget(self._create_separator())
+        
+        self.block_ai_model = SensorDataBlock("Model", "---")
+        self.block_ai_fps_inf = SensorDataBlock("AI FPS", "0", "#00ff78")
+        self.block_ai_fps_vid = SensorDataBlock("Feed FPS", "0", "#00ddff")
+        
+        layout.addWidget(self.block_ai_model)
+        layout.addWidget(self.block_ai_fps_inf)
+        layout.addWidget(self.block_ai_fps_vid)
+        
         layout.addStretch()
         
         # Footer: Active ID
@@ -290,6 +304,12 @@ class SensorPanel(QFrame):
         self.block_viz_lock.set_value(status, color)
         self.block_viz_conf.set_value(f"{int(conf*100)}%")
         self.block_viz_offset.set_value(f"{off_x}, {off_y}")
+
+    def update_ai_diagnostics(self, model, inf_fps, vid_fps):
+        """Update the Reconnaissance AI performance blocks 🚀"""
+        self.block_ai_model.set_value(model)
+        self.block_ai_fps_inf.set_value(int(inf_fps))
+        self.block_ai_fps_vid.set_value(int(vid_fps))
 
     def set_active_node(self, node_name):
         self.lbl_active_id.setText(f"ACTIVE NODE: {node_name}")

@@ -1,5 +1,5 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGridLayout, QLabel, QComboBox, QPushButton, QCheckBox, QLineEdit, QSplitter, QSizePolicy
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGridLayout, QLabel, QComboBox, QPushButton, QCheckBox, QLineEdit, QSplitter, QSizePolicy, QSlider
 from PySide6.QtCore import Qt, Signal
 
 from ui.map_widget import SatelliteMapWidget
@@ -82,17 +82,19 @@ class OpsTab(QWidget):
         vid_ctrl_layout1.addWidget(QLabel("TYPE:"))
         self.combo_vid_type = QComboBox()
         self.combo_vid_type.addItems(["UDP Stream", "USB Sensor", "RTP Stream", "RTMP Server (DJI)"])
-        self.combo_vid_type.setFixedWidth(120)
+        self.combo_vid_type.setFixedWidth(140)
         self.combo_vid_type.currentIndexChanged.connect(self._on_vid_type_changed)
         vid_ctrl_layout1.addWidget(self.combo_vid_type)
         
-        vid_ctrl_layout1.addWidget(QLabel("IP:"))
+        self.lbl_vid_ip = QLabel("IP:")
+        vid_ctrl_layout1.addWidget(self.lbl_vid_ip)
         self.txt_vid_ip = QLineEdit("0.0.0.0")
         self.txt_vid_ip.setStyleSheet("background-color: #111a22; color: #00ddff; padding: 2px;")
         self.txt_vid_ip.setMaximumWidth(90)
         vid_ctrl_layout1.addWidget(self.txt_vid_ip)
         
-        vid_ctrl_layout1.addWidget(QLabel("PORT:"))
+        self.lbl_vid_port = QLabel("PORT:")
+        vid_ctrl_layout1.addWidget(self.lbl_vid_port)
         self.txt_vid_port = QLineEdit("5008")
         self.txt_vid_port.setStyleSheet("background-color: #111a22; color: #00ddff; padding: 2px;")
         self.txt_vid_port.setMaximumWidth(50)
@@ -147,9 +149,9 @@ class OpsTab(QWidget):
         vid_stack.setContentsMargins(0, 0, 0, 0)
 
         self.video_label = ClickableVideoLabel()
-        # Click‑to‑track removed; tracking point is now controlled via the Tracking checkbox
-        self.video_label.setMinimumSize(100, 100)
-        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # BREAK THE FEEDBACK LOOP: Set Ignored policy so the pixmap size doesn't force the layout to grow 🛡️
+        self.video_label.setMinimumSize(400, 300) # ENSURE VISIBILITY: Prevent layout from collapsing the label to 1x1 🛡️
+        self.video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.video_label.setStyleSheet("background-color: #000; border: 1px solid #2a4555;")
         self.video_label.setAlignment(Qt.AlignCenter)
         
@@ -189,6 +191,7 @@ class OpsTab(QWidget):
 
         # Attitude HUD Component
         att_box = QGroupBox("Attitude")
+        att_box.setFixedWidth(140) # COMPACTED: Prevent pushing layout in splitter 🛰️
         att_layout = QGridLayout(att_box)
         att_layout.setContentsMargins(8, 12, 8, 8)
         att_layout.setSpacing(2)
@@ -203,6 +206,7 @@ class OpsTab(QWidget):
         
         # Target HUD Component
         tgt_box = QGroupBox("Tactical Target")
+        tgt_box.setFixedWidth(200) # COMPACTED: Prevent pushing layout in splitter 🛰️
         tgt_layout = QGridLayout(tgt_box)
         tgt_layout.setContentsMargins(8, 12, 8, 8)
         tgt_layout.setSpacing(2)
@@ -214,10 +218,31 @@ class OpsTab(QWidget):
         tgt_layout.addWidget(QLabel("OFF:"), 0, 2); tgt_layout.addWidget(self.lbl_tgt_offset, 0, 3)
         tgt_layout.addWidget(QLabel("CF:"), 1, 0); tgt_layout.addWidget(self.lbl_tgt_conf, 1, 1)
         
+        # Tactical Confidence Slider 🎯
+        conf_box = QHBoxLayout()
+        self.slider_conf = QSlider(Qt.Horizontal)
+        self.slider_conf.setRange(0, 100)
+        self.slider_conf.setValue(25)
+        self.slider_conf.setToolTip("Tactical Confidence Threshold")
+        self.slider_conf.setStyleSheet("""
+            QSlider::handle:horizontal {
+                background: #00ddff;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: #111a22;
+                border: 1px solid #335566;
+            }
+        """)
+        conf_box.addWidget(self.slider_conf)
+        tgt_layout.addLayout(conf_box, 1, 2, 1, 2)
+
         self.btn_wipe_lock = QPushButton("Wipe")
         self.btn_wipe_lock.setFixedWidth(50)
         self.btn_wipe_lock.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border-color: #ff3232; color: #ff3232; font-size: 9px;")
-        tgt_layout.addWidget(self.btn_wipe_lock, 1, 2, 1, 2)
+        tgt_layout.addWidget(self.btn_wipe_lock, 2, 0, 1, 4)
         
         telem_row.addWidget(tgt_box)
         left_pnl.addLayout(telem_row)
@@ -307,9 +332,18 @@ class OpsTab(QWidget):
             self.txt_vid_ip.setText(local_ip)
         else:
             self.lbl_stream_url.setVisible(False)
-            if "UDP" in type_str:
-                self.txt_vid_port.setText("5008")
-                self.txt_vid_ip.setText("0.0.0.0")
+            if "USB" in type_str:
+                self.txt_vid_port.setText("0")
+                self.lbl_vid_ip.setVisible(False)
+                self.txt_vid_ip.setVisible(False)
+                self.lbl_vid_port.setText("INDEX:")
+            else:
+                self.lbl_vid_ip.setVisible(True)
+                self.txt_vid_ip.setVisible(True)
+                self.lbl_vid_port.setText("PORT:")
+                if "UDP" in type_str:
+                    self.txt_vid_port.setText("5008")
+                    self.txt_vid_ip.setText("0.0.0.0")
 
     def update_target_status(self, status, off_x, off_y, conf):
         self.lbl_tgt_status.setText(status)

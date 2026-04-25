@@ -411,7 +411,8 @@ def main():
             if "RTMP" in vtype:
                 src = f"rtmp://{host or '0.0.0.0'}:{vport or '1935'}/live/drone"
             elif "USB" in vtype:
-                src = int(vport) if vport.isdigit() else 0
+                # Local hardware index (integer) 🏁
+                src = int(vport) if (vport and vport.isdigit()) else 0
             else:
                 protocol = "udp" if "UDP" in vtype else "rtp"
                 src = f"{protocol}://{host or '0.0.0.0'}:{vport or '5008'}"
@@ -430,6 +431,9 @@ def main():
             mdl = window.tab_video.model_combo.currentText().split()[0]
             window.video_thread.set_ai_config(eng, mdl)
             window.video_thread.set_world_prompt(window.tab_video.txt_search_prompt.text())
+            # Relocated to OpsTab 🛰️
+            window.video_thread.set_ai_conf(window.tab_ops.slider_conf.value() / 100.0)
+            window.video_thread.ai_diag_updated.connect(window.tab_ops.sensor_panel.update_ai_diagnostics)
             window.video_thread.start()
             window.video_thread.set_show_detections(window.tab_ops.chk_enable_det.isChecked())
             window.video_thread.set_tracking_mode(window.tab_ops.combo_tracking_mode.currentData())
@@ -590,6 +594,8 @@ def main():
     window.tab_ops.btn_wipe_lock.clicked.connect(on_wipe_lock)
     window.tab_ops.chk_show_logs.toggled.connect(window.log_console.setVisible)
     window.tab_video.ai_settings_applied.connect(on_ai_settings_applied)
+    # Tactical HUD Connects 🛰️
+    window.tab_ops.slider_conf.valueChanged.connect(lambda v: window.video_thread.set_ai_conf(v/100.0) if window.video_thread else None)
     window.tab_video.search_prompt_changed.connect(on_search_prompt_changed)
     window.tab_ops.class_filter_changed.connect(lambda ids: window.video_thread.set_active_classes(ids) if window.video_thread else None)
     

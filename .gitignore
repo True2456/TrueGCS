@@ -23,3 +23,16 @@ crash.log
 # IDEs
 .vscode/
 .idea/
+
+# Testing & Training Outputs
+runs/
+new models/
+*.csv
+cv2_info*.txt
+model_names.txt
+
+# Root-level temp test scripts
+/test*.py
+/verify*.py
+/rtmp_diagnose.py
+/mission_train.py

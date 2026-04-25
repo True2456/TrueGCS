@@ -1,6 +1,6 @@
 import serial.tools.list_ports
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QComboBox, QTabWidget, QPlainTextEdit
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QIcon
 
 from ui.styles import BF3_STYLE
@@ -25,7 +25,10 @@ class GCSMainWindow(QMainWindow):
         self.port_timer.start(2000)
 
         self.setWindowIcon(QIcon("resources/icons/drone_icon.png"))
-        self.resize(1000, 750)
+        self.resize(1100, 800)
+        self.setMinimumSize(950, 700)
+        # 🔓 MAXIMIZE RESTORED: Window can now be maximized/resized by the user.
+        # Internal layout locks (Ignored policy on video + fixed-width labels) will still prevent the 'explosive' auto-expansion.
 
         # Mission Logging Console
         self.log_console = QPlainTextEdit()
@@ -69,75 +72,80 @@ class GCSMainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
 
         self.combo_target_drone = QComboBox()
-        self.combo_target_drone.setFixedWidth(220)
+        self.combo_target_drone.setFixedWidth(180)
         self.combo_target_drone.addItem("No Drones Detected", userData=None)
         self.combo_target_drone.setStyleSheet("font-weight: bold; color: #00ddff;")
 
-        self.btn_disconnect_node = QPushButton("Disconnect Node")
+        self.btn_disconnect_node = QPushButton("Disconnect")
         self.btn_disconnect_node.setStyleSheet("background-color: rgba(255, 50, 50, 0.15); border: 1px solid #ff3232; color: #ffffff;")
-        self.btn_disconnect_node.setFixedWidth(130)
+        self.btn_disconnect_node.setFixedWidth(80)
 
         self.combo_type = QComboBox()
+        self.combo_type.setFixedWidth(120)
         ports = serial.tools.list_ports.comports()
         for port in ports:
-            self.combo_type.addItem(f"Serial: {port.device} - {port.description}", userData=("serial", port.device))
-        self.combo_type.addItem("Network: UDP", userData=("udp", ""))
-        self.combo_type.addItem("Network: TCP", userData=("tcp", ""))
+            self.combo_type.addItem(f"Serial: {port.device}", userData=("serial", port.device))
+        self.combo_type.addItem("UDP", userData=("udp", ""))
+        self.combo_type.addItem("TCP", userData=("tcp", ""))
         self.combo_type.currentIndexChanged.connect(self.on_connection_type_changed)
 
-        self.lbl_p1 = QLabel("Baud:")
+        self.lbl_p1 = QLabel("P1:")
         self.txt_p1 = QLineEdit("115200")
-        self.txt_p1.setFixedWidth(100)
+        self.txt_p1.setFixedWidth(70)
         
-        self.lbl_p2 = QLabel("Port:")
+        self.lbl_p2 = QLabel("P2:")
         self.txt_p2 = QLineEdit("14550")
-        self.txt_p2.setFixedWidth(80)
+        self.txt_p2.setFixedWidth(60)
         self.lbl_p2.hide()
         self.txt_p2.hide()
 
         # Phase 1.9: Connection UI Sync (Force initial state to match combo selection)
         self.on_connection_type_changed()
 
-        self.btn_add_node = QPushButton("+ Add Node")
+        self.btn_add_node = QPushButton("+ Add")
         self.btn_add_node.setStyleSheet("background-color: rgba(0, 221, 255, 0.15); border: 1px solid #00ddff; color: #ffffff;")
+        self.btn_add_node.setFixedWidth(60)
         
         self.combo_mode = QComboBox()
-        self.combo_mode.setFixedWidth(110)
+        self.combo_mode.setFixedWidth(90)
         self.combo_mode.hide()
         self.combo_mode.currentTextChanged.connect(self.on_mode_selected)
         
         self.lbl_status = QLabel("Ready")
-        self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 14px;")
+        self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 13px;")
+        self.lbl_status.setFixedWidth(210) # FIXED: Strictly lock the width to prevent horizontal jitter 🛡️
+        self.lbl_status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_status.setWordWrap(False)
 
         self.btn_set_mode = QPushButton("SET")
-        self.btn_set_mode.setFixedWidth(50)
+        self.btn_set_mode.setFixedWidth(40)
         self.btn_set_mode.setStyleSheet("background-color: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #fff;")
         
         # New Arm/Disarm Button 🛰️
-        self.btn_arm = QPushButton("DISARMED")
-        self.btn_arm.setFixedWidth(100)
+        self.btn_arm = QPushButton("DISARM")
+        self.btn_arm.setFixedWidth(70)
         self.btn_arm.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border: 1px solid #ff3232; color: #fff; font-weight: bold;")
         
-        layout.addWidget(QLabel("ACTIVE TARGET:"))
+        layout.addWidget(QLabel("TGT:"))
         layout.addWidget(self.combo_target_drone)
         layout.addWidget(self.btn_disconnect_node)
-        layout.addSpacing(10)
+        layout.addSpacing(5)
         layout.addWidget(self.btn_arm)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("  FLIGHT MODE:"))
+        layout.addSpacing(5)
+        layout.addWidget(QLabel("MODE:"))
         layout.addWidget(self.combo_mode)
         layout.addWidget(self.btn_set_mode)
         
         layout.addStretch()
         
-        layout.addWidget(QLabel("NEW NODE:"))
+        layout.addWidget(QLabel("NEW:"))
         layout.addWidget(self.combo_type)
         layout.addWidget(self.lbl_p1)
         layout.addWidget(self.txt_p1)
         layout.addWidget(self.lbl_p2)
         layout.addWidget(self.txt_p2)
         layout.addWidget(self.btn_add_node)
-        layout.addSpacing(15)
+        layout.addSpacing(10)
         layout.addWidget(self.lbl_status)
         
         return bar
@@ -193,8 +201,13 @@ class GCSMainWindow(QMainWindow):
 
     def update_video_frame(self, img):
         self.tab_ops.video_label.set_source_frame_size(img.width(), img.height())
+        v_size = self.tab_ops.video_label.size()
+        # SAFETY GUARD: If layout hasn't computed a size yet, fallback to a visible default 🛡️
+        if v_size.width() < 10 or v_size.height() < 10:
+            v_size = QSize(640, 480)
+            
         pixmap = QPixmap.fromImage(img)
-        scaled = pixmap.scaled(self.tab_ops.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pixmap.scaled(v_size, Qt.KeepAspectRatio, Qt.FastTransformation)
         self.tab_ops.video_label.setPixmap(scaled)
 
     def on_heartbeat(self, success):

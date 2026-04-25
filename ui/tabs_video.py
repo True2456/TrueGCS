@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QLabel, QComboBox, QPushButton, QGroupBox, QScrollArea, QFrame, QLineEdit, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox, QPushButton, QGroupBox, QScrollArea, QFrame, QLineEdit, QCheckBox, QSlider
 from PySide6.QtCore import Qt, Signal
 
 class VideoTab(QWidget):
@@ -40,7 +40,9 @@ class VideoTab(QWidget):
         self.model_combo = QComboBox()
         # Tactical mission-specific presets
         self.model_combo.addItems([
-            "YOLO26-VisDrone (Custom)",
+            "VisDrone-v2 (YOLO26s)",
+            "YOLO26-1536px (High-Res)",
+            "YOLO26-VisDrone (Legacy)",
             "RT-DETR v2"
         ])
         # No auto‑apply; model changes are applied via the Apply button
@@ -61,7 +63,7 @@ class VideoTab(QWidget):
         self.btn_apply_ai = QPushButton("Apply AI Engine Settings")
         self.btn_apply_ai.clicked.connect(self._emit_ai_engine)
         self.btn_apply_ai.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); border: 1px solid #00ddff; color: #00ddff;")
-        ai_grid.addWidget(self.btn_apply_ai, 3, 0, 1, 2) # Moved to row 3 to prevent overlap 🚀
+        ai_grid.addWidget(self.btn_apply_ai, 3, 0, 1, 2)
         ai_lay.addLayout(ai_grid)
         
         container_layout.addWidget(ai_box)
@@ -92,9 +94,6 @@ class VideoTab(QWidget):
         model_name = self.model_combo.currentText().split()[0]
         self.ai_settings_applied.emit(engine, model_name)
         
-    def _emit_search_prompt(self):
-        self.search_prompt_changed.emit(self.txt_search_prompt.text())
-
     def _emit_search_prompt(self):
         self.search_prompt_changed.emit(self.txt_search_prompt.text())
 

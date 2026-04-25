@@ -21,7 +21,7 @@ class CaptureDaemon:
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
-                    self.frame = frame
+                    self.frame = (frame, time.time()) # Tag with high-res timestamp ⏱️
                     
     def read(self):
         with self.lock:
@@ -42,13 +42,22 @@ class InferenceDaemon:
         self.idle_event = threading.Event()
         self.idle_event.set() # Initially idle
         self.latest_frame = None
+        self.latest_timestamp = None
         self.results = None
+        self.results_timestamp = None
         self.pending_prompt = None
         self.active_class_ids = None # Mission Class Filter ⛓️
+        self.active_conf = 0.25 # Mission Confidence Threshold 🎯
+        self._frames_completed = 0 # Atomic counter for FPS tracking 📈
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._update, daemon=True)
         self.thread.start()
         
+    def update_frame(self, frame, timestamp):
+        with self.lock:
+            self.latest_frame = frame
+            self.latest_timestamp = timestamp
+            
     def _update(self):
         while self.running:
             if self.paused:
@@ -59,8 +68,10 @@ class InferenceDaemon:
             self.idle_event.clear() # Engaging calculations 🏎️
                 
             frame = None
+            ts = None
             with self.lock:
                 frame = self.latest_frame
+                ts = self.latest_timestamp
                 self.latest_frame = None # Consume it
             
             if frame is not None:
@@ -89,10 +100,15 @@ class InferenceDaemon:
                             if cls_list is not None and len(cls_list) == 0:
                                 res = None
                             else:
-                                res = model(frame, verbose=False, half=use_fp16, conf=0.25, imgsz=640, classes=cls_list)
+                                # USE ACTIVE CONFIDENCE: Early exit for weak targets 🏎️
+                                with self.lock:
+                                    conf_val = self.active_conf
+                                res = model(frame, verbose=False, half=use_fp16, conf=conf_val, imgsz=640, classes=cls_list)
                             
                             with self.lock:
+                                self._frames_completed += 1 # Internal throughput counter 📈
                                 self.results = res
+                                self.results_timestamp = ts
                                 num_targets = len(res[0].boxes) if res else 0
                                 if num_targets > 0:
                                     print(f"InferenceDaemon: Detected {num_targets} targets.")
@@ -109,6 +125,11 @@ class InferenceDaemon:
                 self.idle_event.set()
                 time.sleep(0.005) # Prevent CPU spinning if no frame
                 
+    def update_conf(self, conf):
+        with self.lock:
+            self.active_conf = conf
+            print(f"InferenceDaemon: Tactical confidence updated -> {self.active_conf}")
+
     def update_prompt(self, prompt):
         with self.lock:
             self.pending_prompt = prompt
@@ -121,10 +142,6 @@ class InferenceDaemon:
             self.active_class_ids = ids
             print(f"InferenceDaemon: Tactical filter updated -> {self.active_class_ids}")
 
-    def update_frame(self, frame):
-        with self.lock:
-            self.latest_frame = frame
-            
     def pause(self):
         """Strategic Mission Pause with Safety Handshake ⛓️"""
         with self.lock:
@@ -143,7 +160,7 @@ class InferenceDaemon:
 
     def get_results(self):
         with self.lock:
-            return self.results
+            return self.results, self.results_timestamp
 
     def stop(self):
         self.running = False
@@ -159,6 +176,7 @@ class VideoThread(QThread):
     target_status = Signal(str, int, int, float)
     source_frame_size = Signal(int, int)
     ai_ready = Signal(str, str) # Emitted when model is fully loaded and optimized 🚀
+    ai_diag_updated = Signal(str, float, float) # (status/model, ingest_fps, inference_fps) 📈
     
     def __init__(self, stream_url="udp://@:5010", parent=None):
         super().__init__(parent)
@@ -200,6 +218,17 @@ class VideoThread(QThread):
         self.inference_daemon = None
         self.capture_daemon = None
         self.gst_process = None
+        
+        # Performance Monitoring 📈
+        self._fps_ingest = 0.0
+        self._fps_inference = 0.0
+        self._last_fps_calc = time.time()
+        self._frames_drawn = 0
+        self._frames_inferred = 0
+        
+        # Temporal Sync Buffer (Zero-Lag 🚀)
+        from collections import deque
+        self.frame_history = deque(maxlen=30) # ~1s history at 30fps
 
     def set_click_marker(self, x: int | None, y: int | None, ttl_s: float = 1.5) -> None:
         """Show a temporary cross at (x,y) in the *source frame* coordinates."""
@@ -335,8 +364,14 @@ class VideoThread(QThread):
                 if "RT-DETR" in mt:
                     weights = "rtdetr-l.pt"
                     is_rtdetr = True
+                elif "VISDRONE-V2" in mt:
+                    # New YOLO26s trained weights for 2026 missions! 🚀
+                    weights = "new models/best.pt"
+                elif "1536PX" in mt:
+                    # New high-res 1536px variant
+                    weights = "yolo26_1536px.pt"
                 elif "YOLO26" in mt or "VISDRONE" in mt:
-                    # Target the high-performance YOLO26 architecture for mission search
+                    # Legacy VisDrone architecture
                     weights = "Yolo26n Visdrone/yolo26_visdrone_best.pt"
                 else:
                     weights = "yolo26n.pt" # Standardize on YOLO26 for 2026 missions!
@@ -503,6 +538,10 @@ class VideoThread(QThread):
         if self.tracking_mode == "none":
             self.set_tracking_point(None, None)
 
+    def set_ai_conf(self, conf):
+        if self.inference_daemon:
+            self.inference_daemon.update_conf(conf)
+
     def set_active_classes(self, ids):
         self.active_class_ids = ids
         if self.inference_daemon:
@@ -633,12 +672,16 @@ class VideoThread(QThread):
         
         while self.running:
             try:
-                # 0. Acquire Frame Vector asynchronously (Zero Latency Delay)
-                ret, frame = self.capture_daemon.read()
+                # 0. Acquire Frame Vector asynchronously (Zero Latency Delay ⏱️)
+                ret, raw_frame = self.capture_daemon.read()
                 if not ret:
                     time.sleep(0.005)
                     continue
                 
+                # UNWRAP: Separating raw image from high-res pulse timestamp 🚀
+                frame, frame_ts = raw_frame
+                self.frame_history.append((frame_ts, frame))
+
                 # 1. Spawn Truly Asynchronous Mission Loader (Prevents Stutters! 🏎️)
                 if self.pending_model_swap:
                     if self.loading_thread is None or not self.loading_thread.is_alive():
@@ -650,20 +693,52 @@ class VideoThread(QThread):
                         )
                         self.loading_thread.start()
                         self.pending_model_swap = None
-
+                
                 # 2. Update Inference Daemon with the latest frame for background processing
                 if self.show_detections:
-                    self.inference_daemon.update_frame(frame)
+                    self.inference_daemon.update_frame(frame, frame_ts)
                 
-                # Base frame for display
+                # Base frame for display (Corrected attribute access)
                 annotated_frame = frame.copy()
                 h, w = annotated_frame.shape[:2]
                 self.source_frame_size.emit(w, h)
+
+                # 2.2 TACTICAL UI SCALING: Dynamic thickness and font logic 📏🚀
+                # Benchmarked: 2px MINIMUM to avoid shimmering on 1080p feeds during downscaling
+                t_scale = max(2, int(w / 700))  # Stability: 1080p=2px, 4K=5px
+                f_scale = w / 2000.0             # Bolder labels for ISR clarity
+                l_bracket = int(w / 90)          # Bracket length proportional to width
                 
-                # 2. Grab latest results from the background InferenceDaemon (Non-Blocking!)
-                results = self.inference_daemon.get_results() if self.show_detections else None
-                boxes = results[0].boxes.xyxy.cpu().numpy() if (results and len(results) > 0) else []
-                confs = results[0].boxes.conf.cpu().numpy() if (results and len(results) > 0) else []
+                # 2.3 MONOTONIC NEAREST-PAST SYNC: Butter-Smooth & 100% Visibility 🧊🚀
+                results, res_ts = self.inference_daemon.get_results() if (self.show_detections and self.inference_daemon) else (None, None)
+                
+                # DISPLAY HEAD: Target timestamp for a smooth flow (150ms delay) 🏎️
+                target_display_ts = time.time() - 0.15
+                
+                # Pop old frames while searching for the one closest to our delayed display head
+                while len(self.frame_history) > 1:
+                    ts, f = self.frame_history[0]
+                    if ts < target_display_ts:
+                        self.frame_history.popleft() 
+                    else:
+                        break
+                
+                target_frame = frame # Default
+                display_ts = time.time()
+                if self.frame_history:
+                    display_ts, target_frame = self.frame_history[0]
+                
+                # NEAREST-PAST MATCHING: Always show boxes on the best possible frame 🎯
+                current_res = None
+                if results is not None and res_ts is not None:
+                    # If AI result is from the PAST (older than display head), it's valid for this frame
+                    # We keep showing the 'latest' AI result that came BEFORE this frame
+                    if res_ts <= display_ts + 0.01: # Slight epsilon for floating point precision
+                        current_res = results
+                
+                annotated_frame = target_frame.copy()
+                boxes = current_res[0].boxes.xyxy.cpu().numpy() if (current_res and len(current_res) > 0) else []
+                confs = current_res[0].boxes.conf.cpu().numpy() if (current_res and len(current_res) > 0) else []
 
                 if self.show_detections and self.model is not None:
                     sig = f"{self._current_model_type}|{self._current_engine}"
@@ -704,9 +779,9 @@ class VideoThread(QThread):
                     mx, my = self._click_marker
                     # Crosshair (cyan)
                     c = (0, 221, 255)
-                    s = 12
-                    cv2.line(annotated_frame, (mx - s, my), (mx + s, my), c, 2)
-                    cv2.line(annotated_frame, (mx, my - s), (mx, my + s), c, 2)
+                    s = int(l_bracket / 1.5) # Proportional crosshair
+                    cv2.line(annotated_frame, (mx - s, my), (mx + s, my), c, t_scale, cv2.LINE_AA)
+                    cv2.line(annotated_frame, (mx, my - s), (mx, my + s), c, t_scale, cv2.LINE_AA)
 
                 for i, box in enumerate(boxes):
                     x1, y1, x2, y2 = map(int, box)
@@ -714,26 +789,26 @@ class VideoThread(QThread):
                     
                     if current_locked:
                         # Tactical Red Brackets (LOCKED) 🎯
-                        l = 20 # Longer brackets
+                        l = l_bracket 
                         c = (0, 0, 255) # Pure Red
-                        t = 2 # Uniform thickness for clean UI
+                        t = t_scale
                         
-                        # Corner brackets
-                        cv2.line(annotated_frame, (x1, y1), (x1+l, y1), c, t)
-                        cv2.line(annotated_frame, (x1, y1), (x1, y1+l), c, t)
-                        cv2.line(annotated_frame, (x2, y1), (x2-l, y1), c, t)
-                        cv2.line(annotated_frame, (x2, y1), (x2, y1+l), c, t)
-                        cv2.line(annotated_frame, (x1, y2), (x1+l, y2), c, t)
-                        cv2.line(annotated_frame, (x1, y2), (x1, y2-l), c, t)
-                        cv2.line(annotated_frame, (x2, y2), (x2-l, y2), c, t)
-                        cv2.line(annotated_frame, (x2, y2), (x2, y2-l), c, t)
+                        # Corner brackets with Anti-Aliasing for crisp target lock 🚀
+                        cv2.line(annotated_frame, (x1, y1), (x1+l, y1), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x1, y1), (x1, y1+l), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x2, y1), (x2-l, y1), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x2, y1), (x2, y1+l), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x1, y2), (x1+l, y2), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x1, y2), (x1, y2-l), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x2, y2), (x2-l, y2), c, t, cv2.LINE_AA)
+                        cv2.line(annotated_frame, (x2, y2), (x2, y2-l), c, t, cv2.LINE_AA)
                         
-                        # Label with background for high contrast
+                        # Label with Resolution-Aware font scaling and Shadow 🛰️
                         label = f"LOCK - {int(self.lock_on_conf*100)}%"
-                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-                        cv2.rectangle(annotated_frame, (x1, y1 - th - 15), (x1 + tw, y1 - 5), (0, 0, 0), -1)
-                        cv2.putText(annotated_frame, label, (x1, y1-10), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, c, 1)
+                        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, f_scale, t)
+                        cv2.rectangle(annotated_frame, (x1, y1 - th - int(t*5)), (x1 + tw, y1 - int(t*2)), (0, 0, 0), -1)
+                        cv2.putText(annotated_frame, label, (x1, y1-int(t*4)), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, f_scale, c, t, cv2.LINE_AA)
                         
                         # PID Offset Calculation
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
@@ -746,16 +821,29 @@ class VideoThread(QThread):
                         shadow_color = (0, 0, 0)
                         box_color = (0, 255, 0)
                         # Shadow (1px offset)
-                        cv2.rectangle(annotated_frame, (x1+1, y1+1), (x2+1, y2+1), shadow_color, 1)
-                        # Main Box
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+                        cv2.rectangle(annotated_frame, (x1+1, y1+1), (x2+1, y2+1), shadow_color, 1, cv2.LINE_AA)
+                        # Main Box with Anti-Aliasing for reconnaissance clarity 🚀
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, t_scale, cv2.LINE_AA)
                 
-                # Global HUD Status Overlay (Tactical Telemetry)
-                if self.hud_status:
-                    num_targets = len(boxes)
-                    status_text = f"RECON: {self.hud_status} | TARGETS: {num_targets}"
-                    cv2.putText(annotated_frame, status_text, (20, 40), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 221, 255), 2)
+                # 5. Performance Diagnostics (Calculate FPS every 1s) 📈
+                self._frames_drawn += 1
+                now = time.time()
+                dt = now - self._last_fps_calc
+                if dt >= 1.0:
+                    self._fps_ingest = self._frames_drawn / dt
+                    if self.inference_daemon:
+                        with self.inference_daemon.lock:
+                            inf_count = self.inference_daemon._frames_completed
+                            self.inference_daemon._frames_completed = 0
+                        self._fps_inference = inf_count / dt
+                    
+                    self._frames_drawn = 0
+                    self._last_fps_calc = now
+                    
+                    # Emit to UI (Sensors Panel) instead of drawing on video 🚀
+                    # Ensure hud_status is not None to prevent signaling errors
+                    status_text = self.hud_status if self.hud_status else "ACTIVE"
+                    self.ai_diag_updated.emit(status_text, self._fps_ingest, self._fps_inference)
 
                 if self.lock_on_box is None and self.show_detections:
                     if self.tracking_point:
