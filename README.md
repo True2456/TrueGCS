@@ -7,15 +7,15 @@
 
 ## Screenshots
 
-> **To add your own screenshots:** drop `.png` / `.jpg` images into `docs/screenshots/` and they will render here on GitHub.
+> **To add more screenshots:** drop `.png` / `.jpg` images into `docs/screenshots/` and reference them below.
 
-| Operations Tab | Video & Detection |
+| Swarm Simulation | Simulation Controller |
 |:-:|:-:|
-| ![Operations](docs/screenshots/ops_tab.png) | ![Video](docs/screenshots/video_tab.png) |
+| ![Swarm Simulation](docs/screenshots/Swarm%20simulation%20control.png) | ![Simulation Controller](docs/screenshots/Simulation%20controller.png) |
 
-| Simulation Tab | Configuration Tab |
+| AI Tracking Config | Configuration Tab |
 |:-:|:-:|
-| ![Simulation](docs/screenshots/sim_tab.png) | ![Config](docs/screenshots/cfg_tab.png) |
+| ![AI Tracking](docs/screenshots/AI%20Tracking%20config.png) | ![Config](docs/screenshots/Config%20settings.png) |
 
 ---
 
