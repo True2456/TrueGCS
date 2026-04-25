@@ -67,6 +67,7 @@
 ```
 TrueGCS/
 ├── main.py                  # App entry point, signal wiring, node manager
+├── models/                  # Consolidated AI model weights (.pt files)
 ├── ui/
 │   ├── main_window.py       # Main window, connection bar, window geometry
 │   ├── tabs_ops.py          # Operations tab (map, HUD, video controls)
@@ -79,7 +80,7 @@ TrueGCS/
 ├── telemetry/
 │   └── mavlink_thread.py    # MAVLink receive/transmit thread per node
 ├── video/
-│   └── video_thread.py      # Video decode, YOLOv8 inference, gimbal control
+│   └── video_thread.py      # Video decode, YOLO26 inference, gimbal control
 ├── gimbal/
 │   └── mount_tracker.py     # PID-based gimbal tracking controller
 ├── simulation/

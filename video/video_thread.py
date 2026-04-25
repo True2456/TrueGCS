@@ -357,29 +357,30 @@ class VideoThread(QThread):
                 import os
                 # Atomic hotswap weight mapping 🏎️
                 mt = (model_type or "").upper()
-                weights = "yolov8n.pt" # Default failsafe fallback
+                weights = os.path.join("models", "yolov8n.pt") # Default failsafe fallback
                 is_rtdetr = False
                 is_world = False
                 
                 if "RT-DETR" in mt:
-                    weights = "rtdetr-l.pt"
+                    weights = os.path.join("models", "rtdetr-l.pt")
                     is_rtdetr = True
                 elif "VISDRONE-V2" in mt:
-                    # New YOLO26s trained weights for 2026 missions! 🚀
-                    weights = "new models/best.pt"
+                    # New high-performance VisDrone-v2 weights 🚀
+                    weights = os.path.join("models", "gcs_new_models_best.pt")
                 elif "1536PX" in mt:
-                    # New high-res 1536px variant
-                    weights = "yolo26_1536px.pt"
+                    # High-res 1536px variant for long-range ISR
+                    weights = os.path.join("models", "yolo26_1536px.pt")
                 elif "YOLO26" in mt or "VISDRONE" in mt:
-                    # Legacy VisDrone architecture
-                    weights = "Yolo26n Visdrone/yolo26_visdrone_best.pt"
+                    # VisDrone trained weights
+                    weights = os.path.join("models", "detection_train_best.pt")
                 else:
-                    weights = "yolo26n.pt" # Standardize on YOLO26 for 2026 missions!
+                    # Standard YOLO26 base model
+                    weights = os.path.join("models", "yolo26n.pt")
 
                 # Mission Loader: Failsafe Weights Check
                 if not os.path.exists(weights):
                     print(f"Mission Loader: WARNING! {weights} not found. Reverting to base YOLOv8n.")
-                    weights = "yolov8n.pt"
+                    weights = os.path.join("models", "yolov8n.pt")
                     is_rtdetr = False
                     is_world = False
 
@@ -502,7 +503,7 @@ class VideoThread(QThread):
                 
                 with self.model_lock:
                     if self.model is None:
-                        self.model = YOLO("yolov8n.pt")
+                        self.model = YOLO(os.path.join("models", "yolov8n.pt"))
             except:
                 pass
 
@@ -614,21 +615,26 @@ class VideoThread(QThread):
             import random
             self._dynamic_loopback_port = random.randint(15000, 25000)
             
+            # Strip quotes from gst_path if present before building command
+            gst_bin = self.gst_path.strip('"')
+            
             if is_rtmp:
                 # SPECIALIZED RTMP PIPELINE: Requires parsebin for DJI stability 🎯
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             elif getattr(self, "relay_mp", False):
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! tee name=t ! queue max-size-buffers=3 ! rtph264pay ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=3 ! mpegtsmux alignment=7 ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! tee name=t ! queue max-size-buffers=3 ! rtph264pay ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=3 ! mpegtsmux alignment=7 ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             else:
-                cmd = f'"{self.gst_path}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
                 
             print(f"Video Recon: Launching Localhost MPEG-TS Transcoder ->\n{cmd}")
             
             try:
-                # Launch GStreamer directly via Windows API to prevent CMD quote-stripping corruption
-                self.gst_process = subprocess.Popen(cmd, shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Use shell=True to support complex string commands across platforms 🚀
+                self.gst_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 print(f"Video Recon Subprocess Error: {e}")
+                if "No such file" in str(e) and sys.platform == "darwin":
+                    print("Video Recon: GStreamer not found! Install via 'brew install gstreamer'")
             
             import os
             time.sleep(2.0) # Give GStreamer slightly more time to spool up
@@ -886,12 +892,21 @@ class VideoThread(QThread):
             
         # 3. Kill GStreamer Process (PID-Specific cleanup 🎯)
         if hasattr(self, "gst_process") and self.gst_process:
-            pid = self.gst_process.pid
-            try: self.gst_process.terminate()
-            except: pass
-            import os
-            # Only kill This Specific PID to avoid hitting newly started parallel streams!
-            os.system(f"taskkill /F /T /PID {pid} >nul 2>&1")
+            try:
+                import sys
+                if sys.platform == "win32":
+                    pid = self.gst_process.pid
+                    import os
+                    os.system(f"taskkill /F /T /PID {pid} >nul 2>&1")
+                else:
+                    # macOS / Linux — use terminate() and kill() for clean sweep 🧹
+                    self.gst_process.terminate()
+                    try:
+                        self.gst_process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        self.gst_process.kill()
+            except Exception as e:
+                print(f"VideoThread: Error killing GStreamer process: {e}")
 
         # 4. Stop RTMP Relay if active
         if getattr(self, "_rtmp_relay", None):
@@ -908,5 +923,6 @@ class VideoThread(QThread):
             gc.collect()
 
         # 5. Clean teardown wait for OS/CUDA context 🧱
-        self.wait(500)
+        if self.isRunning():
+            self.wait(2000) # Increased timeout for stable cleanup
         print("VideoThread: Stream Cleanly Terminated.")
