@@ -6,6 +6,7 @@ from PySide6.QtCore import QThread, Signal, Qt, QObject, QTimer
 from PySide6.QtGui import QImage
 from ultralytics import YOLO, RTDETR, YOLOWorld
 import threading
+from core.shield import TrueShield
 
 class CaptureDaemon:
     def __init__(self, cap):
@@ -391,18 +392,33 @@ class VideoThread(QThread):
 
                 # 2. Tactical Load into Buffer 🚀 (With Corrupted File Protection 🛡️)
                 try:
+                    # ---- TRUESHIELD DECRYPTION LAYER 🛡️ ----
+                    shield_path = weights.replace(".pt", ".tsm")
+                    load_path = weights
+                    
+                    if os.path.exists(shield_path):
+                        print(f"Mission Loader: Decrypting Shielded Model {os.path.basename(shield_path)}...")
+                        shield = TrueShield()
+                        # Decrypt to a temporary file for maximum YOLO compatibility
+                        load_path = shield.decrypt_to_temp_file(shield_path)
+                    
                     if is_rtdetr:
-                        temp_model = RTDETR(weights)
+                        temp_model = RTDETR(load_path)
                     elif is_world:
                         # Fallback for YOLO-World if specifically requested pt is missing
-                        if not os.path.exists(weights):
-                            print(f"Mission Loader: {weights} missing. Using zero-shot YOLO-World base.")
-                            weights = "yolov8s-worldv2.pt" # Official Ultralytics name
-                        temp_model = YOLOWorld(weights)
+                        if not os.path.exists(load_path):
+                            print(f"Mission Loader: {load_path} missing. Using zero-shot YOLO-World base.")
+                            load_path = "yolov8s-worldv2.pt" # Official Ultralytics name
+                        temp_model = YOLOWorld(load_path)
                         classes = [c.strip() for c in self._world_prompt.split(",")]
                         temp_model.set_classes(classes)
                     else:
-                        temp_model = YOLO(weights)
+                        temp_model = YOLO(load_path)
+                        
+                    # Clean up temp file immediately if it was a shielded model
+                    if load_path != weights and os.path.exists(load_path):
+                        try: os.remove(load_path)
+                        except: pass
                 except Exception as e:
                     print(f"Mission Loader: FATAL! {weights} is corrupted. Deleting and falling back.")
                     try: os.remove(weights)
