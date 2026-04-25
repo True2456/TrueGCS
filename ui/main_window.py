@@ -7,6 +7,7 @@ from ui.styles import BF3_STYLE
 from ui.tabs_ops import OpsTab
 from ui.tabs_cfg import CfgTab
 from ui.tabs_video import VideoTab
+from ui.tabs_sim import SimTab
 from core.pid_controller import GimbalPIDController
 
 class GCSMainWindow(QMainWindow):
@@ -54,6 +55,7 @@ class GCSMainWindow(QMainWindow):
         self.tab_ops = OpsTab()
         self.tab_video = VideoTab()
         self.tab_cfg = CfgTab()
+        self.tab_sim = SimTab()
         
         # Link Cfg Tab status label to connection bar status label
         self.tab_cfg.lbl_status = self.lbl_status
@@ -61,6 +63,7 @@ class GCSMainWindow(QMainWindow):
         self.tabs.addTab(self.tab_ops, "Operations")
         self.tabs.addTab(self.tab_video, "Video & Detection")
         self.tabs.addTab(self.tab_cfg, "Configuration")
+        self.tabs.addTab(self.tab_sim, "Simulation")
         
         self.main_layout.addWidget(self.tabs)
         self.main_layout.addWidget(self.log_console)
@@ -237,4 +240,7 @@ class GCSMainWindow(QMainWindow):
         # The main.py will handle shutting down all telemetry nodes when app exits
         if self.video_thread:
             self.video_thread.stop()
+        # Stop any running simulation subprocesses 🚀
+        if hasattr(self, 'tab_sim'):
+            self.tab_sim.stop_all()
         event.accept()
