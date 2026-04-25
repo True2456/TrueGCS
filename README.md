@@ -163,22 +163,6 @@ source venv/bin/activate && python simulation/vtol_sim.py --port 14551
 
 ---
 
-## Adding Your Own Screenshots
-
-1. Take screenshots of the running GCS
-2. Save them to `docs/screenshots/` with these names:
-
-| File | Tab |
-|---|---|
-| `docs/screenshots/ops_tab.png` | Operations (map view) |
-| `docs/screenshots/video_tab.png` | Video & Detection |
-| `docs/screenshots/sim_tab.png` | Simulation |
-| `docs/screenshots/cfg_tab.png` | Configuration |
-
-3. Commit and push — they will appear in this README automatically
-
----
-
 ## Platform Support
 
 | Platform | Status |
@@ -191,4 +175,9 @@ source venv/bin/activate && python simulation/vtol_sim.py --port 14551
 
 ## License
 
-Private repository — all rights reserved.
+Copyright (c) 2025 True2456. All rights reserved.
+
+This software is provided for personal, non-commercial, and evaluation use only.  
+Commercial use, modification, redistribution, and incorporation into other projects are strictly prohibited without prior written permission from the copyright holder.
+
+See [LICENSE](LICENSE) for full terms.
