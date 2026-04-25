@@ -627,26 +627,27 @@ class VideoThread(QThread):
             if target_ip == "@": target_ip = "0.0.0.0"
             
             cmd = ""
-            # Dynamically select a randomized internal loopback port to aggressively bypass orphaned WSAEADDRINUSE socket locks from crashed ghost sessions!
-            import random
-            self._dynamic_loopback_port = random.randint(15000, 25000)
+            # Use a stable internal loopback port for the intermediate MPEG-TS stream
+            self._dynamic_loopback_port = 19220
             
             # Strip quotes from gst_path if present before building command
             gst_bin = self.gst_path.strip('"')
             
             if is_rtmp:
                 # SPECIALIZED RTMP PIPELINE: Requires parsebin for DJI stability 🎯
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             elif getattr(self, "relay_mp", False):
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! tee name=t ! queue max-size-buffers=3 ! rtph264pay ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port=5600 sync=false t. ! queue max-size-buffers=3 ! mpegtsmux alignment=7 ! queue max-size-buffers=3 ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! queue ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
             else:
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} buffer-size=10000000 ! queue max-size-buffers=3 ! parsebin ! mpegtsmux alignment=7 ! queue max-size-buffers=3 leaky=downstream ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+                # Standard UDP-to-Localhost Transcoder
+                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
                 
             print(f"Video Recon: Launching Localhost MPEG-TS Transcoder ->\n{cmd}")
             
             try:
                 # Use shell=True to support complex string commands across platforms 🚀
-                self.gst_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Enable stderr so we can see GStreamer errors in the terminal
+                self.gst_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=None)
             except Exception as e:
                 print(f"Video Recon Subprocess Error: {e}")
                 if "No such file" in str(e) and sys.platform == "darwin":
@@ -940,5 +941,9 @@ class VideoThread(QThread):
 
         # 5. Clean teardown wait for OS/CUDA context 🧱
         if self.isRunning():
-            self.wait(2000) # Increased timeout for stable cleanup
+            self.quit() # Signal Qt event loop to exit
+            if not self.wait(3000): # Wait up to 3s for thread to join
+                print("VideoThread: Warning! Thread join timed out. Forcing termination.")
+                self.terminate()
+                self.wait(1000)
         print("VideoThread: Stream Cleanly Terminated.")
