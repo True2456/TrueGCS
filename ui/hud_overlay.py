@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QSizePolicy
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QTransform
 
@@ -185,8 +185,12 @@ class SensorPanel(QFrame):
     """Tactical Slide-out Sensor & Navigation Status Panel 🛰️"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(180)
-        self._gps_active = True # Track state to avoid flickering 🛡️
+        self.setFixedWidth(192)  # 180px content + scrollbar breathing room
+        self._gps_active = True  # Track state to avoid flickering 🛡️
+        # Use a maximum height so the panel never overflows the window on any
+        # display scale (the common macOS / Windows DPI mismatch bug).
+        self.setMaximumHeight(600)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self.setStyleSheet("""
             QFrame {
                 background-color: rgba(9, 14, 17, 0.9);
@@ -194,37 +198,63 @@ class SensorPanel(QFrame):
                 border-bottom-left-radius: 10px;
             }
         """)
-        
-        layout = QVBoxLayout(self)
+
+        # Outer layout just holds the scroll area
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Scroll area so content is always reachable regardless of window height
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background: rgba(0,0,0,0); width: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(0, 221, 255, 0.3); border-radius: 3px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+        outer_layout.addWidget(scroll)
+
+        # Inner content widget
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-        
+        scroll.setWidget(content)
+
         # Header
         header = QLabel("TACTICAL MONITOR")
         header.setStyleSheet("color: #00ddff; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
         layout.addWidget(header)
-        
+
         # Section: Avionics
         layout.addWidget(self._create_separator())
         self.block_alt_lidar = SensorDataBlock("Lidar (SF20)")
         self.block_airspeed = SensorDataBlock("Airspeed")
         self.block_gps_stat = SensorDataBlock("GPS Status", "ACTIVE", "#00ff78")
-        
+
         layout.addWidget(self.block_alt_lidar)
         layout.addWidget(self.block_airspeed)
         layout.addWidget(self.block_gps_stat)
-        
+
         # Section: TRN Diagnostics 🛰️
         trn_header = QLabel("TRN / NAVIGATION")
         trn_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
         layout.addWidget(trn_header)
         layout.addWidget(self._create_separator())
-        
+
         self.block_gps2_fix = SensorDataBlock("GPS2 Fix", "---")
         self.block_gps2_hdop = SensorDataBlock("PSR Conf", "---")
         self.block_ekf_pos = SensorDataBlock("EKF Health", "WAIT", "#ffaa00")
         self.block_wp_dist = SensorDataBlock("Target Dist", "0 m")
-        
+
         layout.addWidget(self.block_gps2_fix)
         layout.addWidget(self.block_gps2_hdop)
         layout.addWidget(self.block_ekf_pos)
@@ -235,17 +265,17 @@ class SensorPanel(QFrame):
         vnav_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
         layout.addWidget(vnav_header)
         layout.addWidget(self._create_separator())
-        
+
         self.block_viz_lock = SensorDataBlock("State", "SEARCHING", "#92b0c3")
         self.block_viz_conf = SensorDataBlock("Confidence", "0%")
         self.block_viz_offset = SensorDataBlock("Px Offset", "0, 0")
-        
+
         layout.addWidget(self.block_viz_lock)
         layout.addWidget(self.block_viz_conf)
         layout.addWidget(self.block_viz_offset)
-        
+
         layout.addStretch()
-        
+
         # Footer: Active ID
         self.lbl_active_id = QLabel("NODE: ---")
         self.lbl_active_id.setStyleSheet("color: rgba(0, 221, 255, 0.4); font-size: 8px; font-family: 'Consolas';")

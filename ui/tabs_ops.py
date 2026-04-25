@@ -6,6 +6,78 @@ from ui.map_widget import SatelliteMapWidget
 from ui.hud_overlay import MapHUD, VideoHUD, SensorPanel
 
 
+class MapOverlayContainer(QWidget):
+    """Container that fills its space with a map widget and positions overlay
+    panels as true floating children — completely outside the layout system so
+    they never inflate the window's minimum/preferred size."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._base   = None   # fills entire container
+        self._top    = None   # HUD overlay (also fills entire container)
+        self._panel  = None   # floating right-top panel
+        self._panel_margin = 0
+        self._btn    = None   # floating right-bottom button
+        self._btn_margin = 8
+
+    def set_base(self, widget):
+        self._base = widget
+        widget.setParent(self)
+        widget.show()
+        self._do_layout()
+
+    def set_hud(self, widget):
+        self._top = widget
+        widget.setParent(self)
+        widget.show()
+        self._do_layout()
+
+    def set_floating_panel(self, widget, margin=0):
+        """Panel anchored to top-right; never affects layout minimum size."""
+        self._panel = widget
+        self._panel_margin = margin
+        widget.setParent(self)
+        # panel starts hidden; visibility is toggled by the SENSORS button
+        self._do_layout()
+
+    def set_floating_btn(self, widget, margin=8):
+        """Button anchored to bottom-right."""
+        self._btn = widget
+        self._btn_margin = margin
+        widget.setParent(self)
+        widget.show()
+        self._do_layout()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._do_layout()
+
+    def _do_layout(self):
+        w, h = self.width(), self.height()
+        if w == 0 or h == 0:
+            return
+        # Base and HUD fill the whole container
+        for widget in (self._base, self._top):
+            if widget:
+                widget.setGeometry(0, 0, w, h)
+        # Floating panel: anchored top-right, capped to container height
+        if self._panel:
+            pw = self._panel.sizeHint().width() or 192
+            ph = min(
+                self._panel.sizeHint().height(),
+                self._panel.maximumHeight(),
+                h - self._btn_margin * 2,
+            )
+            ph = max(ph, 80)
+            self._panel.setGeometry(w - pw - self._panel_margin, 0, pw, ph)
+        # Floating button: anchored bottom-right
+        if self._btn:
+            bw = self._btn.width() or self._btn.sizeHint().width()
+            bh = self._btn.height() or self._btn.sizeHint().height()
+            self._btn.move(w - bw - self._btn_margin,
+                           h - bh - self._btn_margin)
+
+
 class ClickableVideoLabel(QLabel):
     frame_clicked = Signal(int, int)
 
@@ -224,23 +296,21 @@ class OpsTab(QWidget):
         
         splitter.addWidget(left_widget)
 
-        # Right Panel (Map Background with HUD Overlay)
-        map_container = QWidget()
-        map_grid = QGridLayout(map_container)
-        map_grid.setContentsMargins(5, 0, 0, 0)
-        
+        # Right Panel — MapOverlayContainer keeps overlays completely outside
+        # the layout system so they never inflate the window's minimum size.
+        map_container = MapOverlayContainer()
+        map_container.setContentsMargins(5, 0, 0, 0)
+
         self.map_widget = SatelliteMapWidget()
         self.map_hud = MapHUD()
         self.sensor_panel = SensorPanel()
         self.sensor_panel.setVisible(False)
-        
-        map_grid.addWidget(self.map_widget, 0, 0)
-        map_grid.addWidget(self.map_hud, 0, 0)
-        
-        # Sensor Panel Alignment (Right Side)
-        map_grid.addWidget(self.sensor_panel, 0, 0, Qt.AlignRight | Qt.AlignTop)
-        
-        # Sensor Toggle Button (Floating on Map)
+
+        map_container.set_base(self.map_widget)
+        map_container.set_hud(self.map_hud)
+        map_container.set_floating_panel(self.sensor_panel)
+
+        # Sensor Toggle Button (floating, bottom-right)
         self.btn_toggle_sensors = QPushButton("SENSORS")
         self.btn_toggle_sensors.setCheckable(True)
         self.btn_toggle_sensors.setFixedSize(70, 24)
@@ -260,8 +330,8 @@ class OpsTab(QWidget):
             }
         """)
         self.btn_toggle_sensors.toggled.connect(self.sensor_panel.setVisible)
-        map_grid.addWidget(self.btn_toggle_sensors, 0, 0, Qt.AlignRight | Qt.AlignBottom)
-        
+        map_container.set_floating_btn(self.btn_toggle_sensors)
+
         splitter.addWidget(map_container)
         
         # Force Layout 1/3 (Video) and 2/3 (Satellite)

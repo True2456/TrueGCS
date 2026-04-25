@@ -1,7 +1,21 @@
 import serial.tools.list_ports
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QComboBox, QTabWidget, QPlainTextEdit
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QComboBox, QTabWidget, QPlainTextEdit, QApplication, QSizePolicy
+from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QIcon
+
+
+class CompactComboBox(QComboBox):
+    """QComboBox that caps its minimumSizeHint to its fixed/maximum width so the
+    macOS native style can't inflate the window's minimum size via long item text."""
+    def minimumSizeHint(self):
+        base = super().minimumSizeHint()
+        cap  = self.maximumWidth()
+        return QSize(min(base.width(), cap), base.height())
+
+    def sizeHint(self):
+        base = super().sizeHint()
+        cap  = self.maximumWidth()
+        return QSize(min(base.width(), cap), base.height())
 
 from ui.styles import BF3_STYLE
 from ui.tabs_ops import OpsTab
@@ -25,7 +39,7 @@ class GCSMainWindow(QMainWindow):
         self.port_timer.start(2000)
 
         self.setWindowIcon(QIcon("resources/icons/drone_icon.png"))
-        self.resize(1000, 750)
+        self._first_show = True  # Guard so we only auto-size once
 
         # Mission Logging Console
         self.log_console = QPlainTextEdit()
@@ -66,78 +80,85 @@ class GCSMainWindow(QMainWindow):
         bar = QWidget()
         bar.setStyleSheet("background-color: #111a22; border: 1px solid #2a4555;")
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(6, 6, 6, 6)  # Was 10,10,10,10
+        layout.setSpacing(4)                    # Was default ~6px
 
-        self.combo_target_drone = QComboBox()
-        self.combo_target_drone.setFixedWidth(220)
-        self.combo_target_drone.addItem("No Drones Detected", userData=None)
+        self.combo_target_drone = CompactComboBox()
+        self.combo_target_drone.setFixedWidth(160)  # Was 220
+        self.combo_target_drone.addItem("No Drones", userData=None)
         self.combo_target_drone.setStyleSheet("font-weight: bold; color: #00ddff;")
+        self.combo_target_drone.setToolTip("Active target drone")
 
-        self.btn_disconnect_node = QPushButton("Disconnect Node")
+        self.btn_disconnect_node = QPushButton("✕ Node")
         self.btn_disconnect_node.setStyleSheet("background-color: rgba(255, 50, 50, 0.15); border: 1px solid #ff3232; color: #ffffff;")
-        self.btn_disconnect_node.setFixedWidth(130)
+        self.btn_disconnect_node.setFixedWidth(70)  # Was 130
+        self.btn_disconnect_node.setToolTip("Disconnect active node")
 
-        self.combo_type = QComboBox()
+        self.combo_type = CompactComboBox()
+        self.combo_type.setFixedWidth(165)  # Was 185
+        self.combo_type.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         ports = serial.tools.list_ports.comports()
         for port in ports:
-            self.combo_type.addItem(f"Serial: {port.device} - {port.description}", userData=("serial", port.device))
-        self.combo_type.addItem("Network: UDP", userData=("udp", ""))
-        self.combo_type.addItem("Network: TCP", userData=("tcp", ""))
+            label = f"Serial: {port.device}"
+            self.combo_type.addItem(label, userData=("serial", port.device))
+            self.combo_type.setItemData(self.combo_type.count() - 1,
+                                        f"{port.device} — {port.description}",
+                                        Qt.ToolTipRole)
+        self.combo_type.addItem("UDP", userData=("udp", ""))
+        self.combo_type.addItem("TCP", userData=("tcp", ""))
         self.combo_type.currentIndexChanged.connect(self.on_connection_type_changed)
 
         self.lbl_p1 = QLabel("Baud:")
         self.txt_p1 = QLineEdit("115200")
-        self.txt_p1.setFixedWidth(100)
+        self.txt_p1.setFixedWidth(80)   # Was 100
         
         self.lbl_p2 = QLabel("Port:")
         self.txt_p2 = QLineEdit("14550")
-        self.txt_p2.setFixedWidth(80)
+        self.txt_p2.setFixedWidth(70)   # Was 80
         self.lbl_p2.hide()
         self.txt_p2.hide()
 
-        # Phase 1.9: Connection UI Sync (Force initial state to match combo selection)
         self.on_connection_type_changed()
 
-        self.btn_add_node = QPushButton("+ Add Node")
+        self.btn_add_node = QPushButton("+ Add")
+        self.btn_add_node.setFixedWidth(70)  # Was 90
+        self.btn_add_node.setToolTip("Add connection node")
         self.btn_add_node.setStyleSheet("background-color: rgba(0, 221, 255, 0.15); border: 1px solid #00ddff; color: #ffffff;")
         
-        self.combo_mode = QComboBox()
-        self.combo_mode.setFixedWidth(110)
+        self.combo_mode = CompactComboBox()
+        self.combo_mode.setFixedWidth(100)  # Was 110
         self.combo_mode.hide()
         self.combo_mode.currentTextChanged.connect(self.on_mode_selected)
         
         self.lbl_status = QLabel("Ready")
-        self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 14px;")
+        self.lbl_status.setMaximumWidth(180)  # Was 220
+        self.lbl_status.setStyleSheet("color: #92b0c3; font-size: 12px;")
 
         self.btn_set_mode = QPushButton("SET")
-        self.btn_set_mode.setFixedWidth(50)
+        self.btn_set_mode.setFixedWidth(44)  # Was 50
         self.btn_set_mode.setStyleSheet("background-color: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #fff;")
         
-        # New Arm/Disarm Button 🛰️
         self.btn_arm = QPushButton("DISARMED")
-        self.btn_arm.setFixedWidth(100)
+        self.btn_arm.setFixedWidth(90)  # Was 100
         self.btn_arm.setStyleSheet("background-color: rgba(255, 50, 50, 0.1); border: 1px solid #ff3232; color: #fff; font-weight: bold;")
         
-        layout.addWidget(QLabel("ACTIVE TARGET:"))
+        # Left side: target/arm/mode
+        layout.addWidget(QLabel("TGT:"))
         layout.addWidget(self.combo_target_drone)
         layout.addWidget(self.btn_disconnect_node)
-        layout.addSpacing(10)
         layout.addWidget(self.btn_arm)
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("  FLIGHT MODE:"))
+        layout.addWidget(QLabel("MODE:"))
         layout.addWidget(self.combo_mode)
         layout.addWidget(self.btn_set_mode)
-        
         layout.addStretch()
-        
-        layout.addWidget(QLabel("NEW NODE:"))
+        # Right side: new node connection
+        layout.addWidget(QLabel("NODE:"))
         layout.addWidget(self.combo_type)
         layout.addWidget(self.lbl_p1)
         layout.addWidget(self.txt_p1)
         layout.addWidget(self.lbl_p2)
         layout.addWidget(self.txt_p2)
         layout.addWidget(self.btn_add_node)
-        layout.addSpacing(15)
         layout.addWidget(self.lbl_status)
         
         return bar
@@ -162,9 +183,13 @@ class GCSMainWindow(QMainWindow):
             self.combo_type.blockSignals(True)
             self.combo_type.clear()
             for port in ports:
-                self.combo_type.addItem(f"Serial: {port.device} - {port.description}", userData=("serial", port.device))
-            self.combo_type.addItem("Network: UDP", userData=("udp", ""))
-            self.combo_type.addItem("Network: TCP", userData=("tcp", ""))
+                label = f"Serial: {port.device}"
+                self.combo_type.addItem(label, userData=("serial", port.device))
+                self.combo_type.setItemData(self.combo_type.count() - 1,
+                                            f"{port.device} — {port.description}",
+                                            Qt.ToolTipRole)
+            self.combo_type.addItem("UDP", userData=("udp", ""))
+            self.combo_type.addItem("TCP", userData=("tcp", ""))
             
             # Restore selection
             for i in range(self.combo_type.count()):
@@ -219,6 +244,43 @@ class GCSMainWindow(QMainWindow):
         # We will dynamically grab the active drone from the core manager, 
         # so this UI just emits the intent to change mode
         pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._first_show:
+            self._first_show = False
+            # Defer until after the window is actually mapped by the OS.
+            # resize()/move() called before show() are silently ignored on macOS.
+            QTimer.singleShot(0, self._fit_to_screen)
+
+    def _fit_to_screen(self):
+        """Resize and centre the window so it always fits within the available
+        screen area on any platform/DPI scale."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        w = min(int(avail.width()  * 0.92), 1400)
+        h = min(int(avail.height() * 0.92),  900)
+        from PySide6.QtWidgets import QLayout
+        self.main_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        # Cap the maximum so macOS commits the resize before we restore bounds.
+        self.setMaximumSize(w, h)
+        self.resize(w, h)
+        # Read actual size (resize may be clamped)
+        actual_w = self.width()
+        actual_h = self.height()
+        x = avail.x() + max(0, (avail.width()  - actual_w) // 2)
+        y = avail.y() + max(0, (avail.height() - actual_h) // 2)
+        x = min(x, avail.x() + avail.width()  - actual_w)
+        y = min(y, avail.y() + avail.height() - actual_h)
+        x = max(x, avail.x())
+        y = max(y, avail.y())
+        self.move(x, y)
+        QTimer.singleShot(150, lambda: (
+            self.setMaximumSize(16777215, 16777215),
+            self.setMinimumSize(0, 0),
+        ))
 
     def closeEvent(self, event):
         # The main.py will handle shutting down all telemetry nodes when app exits
