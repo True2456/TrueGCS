@@ -59,7 +59,7 @@ def main():
 
     global current_ai_engine, current_ai_model
     current_ai_engine = "CPU"
-    current_ai_model = "YOLOv8n"
+    current_ai_model = "YOLO26n"
 
     window.video_thread = None
     window.tab_ops.video_label.video_thread = None

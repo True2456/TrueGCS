@@ -37,7 +37,7 @@
 
 ### 🎥 Video & Detection
 - UDP / RTMP / RTP / USB camera input
-- **YOLOv8 / YOLOv8x / YOLO26 (1536px)** AI object detection
+- **YOLO26 / YOLO26s / YOLO26-1536px** AI object detection — custom-trained on VisDrone dataset
 - **Click-to-track** — nearest detection, pixel seed, or centre slew modes
 - Gimbal / mount control via MAVLink DO_MOUNT_CONTROL
 - GPS-tagged target overlay on map

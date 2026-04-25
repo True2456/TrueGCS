@@ -23,7 +23,7 @@ class VideoTab(QWidget):
         container_layout.setAlignment(Qt.AlignTop)
         
         # 1. AI Engine Section
-        ai_box = QGroupBox("Reconnaissance AI Engine (YOLOv8)")
+        ai_box = QGroupBox("Reconnaissance AI Engine (YOLO26)")
         ai_lay = QVBoxLayout(ai_box)
         
         lbl_ai_info = QLabel("Select the hardware acceleration provider for object tracking.\nCUDA natively requires an NVIDIA GPU and cu121 binaries.")
