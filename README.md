@@ -7,7 +7,6 @@
 
 ## Screenshots
 
-> **To add more screenshots:** drop `.png` / `.jpg` images into `docs/screenshots/` and reference them below.
 
 | Swarm Simulation | Simulation Controller |
 |:-:|:-:|
