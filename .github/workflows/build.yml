@@ -1,4 +1,4 @@
-name: Tactical Build (High-Security)
+name: Tactical Build (Windows-Only)
 
 on:
   push:
@@ -8,21 +8,8 @@ on:
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            artifact_name: TrueGCS-Windows
-            data_sep: ";"
-          - os: macos-latest
-            artifact_name: TrueGCS-MacOS
-            data_sep: ":"
-          - os: ubuntu-latest
-            artifact_name: TrueGCS-Linux
-            data_sep: ":"
-
+    name: Build for Windows
+    runs-on: windows-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -47,10 +34,10 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onedir --windowed --add-data "models${{ matrix.data_sep }}models" --hidden-import=ultralytics --hidden-import=torch --hidden-import=serial --hidden-import=PySide6.QtWebEngineWidgets --hidden-import=PySide6.QtWebEngineCore --name "TrueGCS" main.py
+          pyinstaller --noconfirm --onedir --windowed --add-data "models;models" --hidden-import=ultralytics --hidden-import=torch --hidden-import=serial --hidden-import=cryptography --hidden-import=cryptography.hazmat.primitives.kdf.pbkdf2 --hidden-import=PySide6.QtWebEngineWidgets --hidden-import=PySide6.QtWebEngineCore --name "TrueGCS" main.py
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: TrueGCS-Windows-Latest
           path: dist/
