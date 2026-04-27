@@ -15,9 +15,8 @@ cache/
 gcs_crash.log
 crash.log
 
-# AI Weights / Models
+# AI Weights / Models (Encrypted .tsm allowed for builds)
 *.pt
-*.tsm
 *.engine
 *.onnx
 
