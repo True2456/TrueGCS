@@ -46,11 +46,11 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           script-name: main.py
-          # Using the exact parameter names allowed by Nuitka-Action
           mode: onefile
           enable-plugins: pyside6
           disable-console: true
-          macos-app-mode: bundle
+          # Corrected for macOS: gui mode for full windowed apps
+          macos-app-mode: gui
           # Include models and packages
           include-data-dir: models=models
           include-package: |
