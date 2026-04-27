@@ -46,11 +46,13 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           script-name: main.py
-          mode: onefile
+          # Switching to 'app' mode to satisfy PySide6 WebEngine requirements on macOS
+          mode: app
           enable-plugins: pyside6
           disable-console: true
-          # Corrected for macOS: gui mode for full windowed apps
           macos-app-mode: gui
+          # Specific module parameters to avoid warnings/bloat
+          module-parameter: torch-disable-jit=yes
           # Include models and packages
           include-data-dir: models=models
           include-package: |
