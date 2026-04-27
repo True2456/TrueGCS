@@ -45,14 +45,13 @@ jobs:
       - name: Build with Nuitka
         uses: Nuitka/Nuitka-Action@main
         with:
-          # Using default stable version instead of main
           script-name: main.py
-          standalone: true
-          onefile: true
+          # Using the exact parameter names allowed by Nuitka-Action
+          mode: onefile
           enable-plugins: pyside6
-          windows-disable-console: true
-          macos-create-app-bundle: true
-          # Explicitly include the encrypted models and custom logic packages
+          disable-console: true
+          macos-app-mode: bundle
+          # Include models and packages
           include-data-dir: models=models
           include-package: |
             ui
@@ -71,3 +70,4 @@ jobs:
             build/*.app
             build/*.bin
             build/*.dist
+            build/*.zip
