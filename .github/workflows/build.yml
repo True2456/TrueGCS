@@ -1,0 +1,63 @@
+name: Tactical Build (Nuitka)
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags (e.g., v1.0.0)
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            executable: TrueGCS.exe
+          - os: macos-latest
+            executable: TrueGCS.app
+          - os: ubuntu-latest
+            executable: TrueGCS.bin
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka zstandard
+
+      - name: Build with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: main.py
+          standalone: true
+          onefile: true
+          enable-plugins: pyside6
+          windows-disable-console: true
+          macos-create-app-bundle: true
+          # Include models for the AI engine
+          include-data-dir: models=models
+          # Include icons/assets if they exist (ignoring if missing to prevent build failure)
+          # Note: If you add a resources folder later, Nuitka will pick it up here
+          output-dir: build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrueGCS-${{ matrix.os }}
+          path: |
+            build/*.exe
+            build/*.app
+            build/*.bin
+            build/*.dist
