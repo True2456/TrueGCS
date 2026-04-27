@@ -27,6 +27,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
+          # Python 3.11 is the most stable version for Nuitka + Torch
           python-version: '3.11'
           cache: 'pip'
 
@@ -47,7 +48,6 @@ jobs:
         with:
           script-name: main.py
           mode: app
-          # Added torch plugin to fix TypeError in torch.library during startup
           enable-plugins: |
             pyside6
             torch
@@ -55,12 +55,15 @@ jobs:
           macos-app-mode: gui
           module-parameter: torch-disable-jit=yes
           include-data-dir: models=models
+          # Explicitly including packages to prevent 'ModuleNotFoundError'
           include-package: |
             ui
             video
             telemetry
             core
             gimbal
+            serial
+            ultralytics
           output-dir: build
 
       - name: Upload Build Artifact
