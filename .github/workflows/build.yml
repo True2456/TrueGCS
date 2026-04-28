@@ -34,7 +34,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onedir --windowed --add-data "models;models" --hidden-import=ultralytics --hidden-import=torch --hidden-import=serial --hidden-import=cryptography --hidden-import=cryptography.hazmat.primitives.kdf.pbkdf2 --hidden-import=PySide6.QtWebEngineWidgets --hidden-import=PySide6.QtWebEngineCore --name "TrueGCS" main.py
+          pyinstaller --noconfirm --onedir --windowed --add-data "models;models" --hidden-import=ultralytics --hidden-import=torch --hidden-import=serial --hidden-import=pymavlink --hidden-import=pymavlink.mavutil --hidden-import=cryptography --hidden-import=cryptography.fernet --hidden-import=cryptography.hazmat.primitives.kdf.pbkdf2 --hidden-import=cryptography.hazmat.backends --hidden-import=cryptography.hazmat.primitives.hashes --hidden-import=requests --hidden-import=bleak --hidden-import=cv2 --hidden-import=PySide6.QtWebEngineWidgets --hidden-import=PySide6.QtWebEngineCore --name "TrueGCS" main.py
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
