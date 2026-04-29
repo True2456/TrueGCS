@@ -630,20 +630,7 @@ class VideoThread(QThread):
         target_src = self.stream_url
         self.gst_process = None
         cap = None
-        self._rtmp_relay = None
         
-        # 1. RTMP Server Support (DJI Push Mode) 🚁
-        is_rtmp = "rtmp://" in str(target_src).lower()
-        if is_rtmp:
-            from video.rtmp_relay import RTMPRelay
-            # DJI RTMP is usually on 1935. We listen and forward to 5010 internal
-            self._rtmp_relay = RTMPRelay(listen_port=1935, target_port=5010)
-            if self._rtmp_relay.start():
-                target_src = "udp://127.0.0.1:5010"
-                print("VideoThread: RTMP Relay listening for drone on Port 1935.")
-            else:
-                self.hud_status = "RTMP PORT BUSY"
-                return
 
         if "udp://" in str(target_src).lower() and hasattr(self, "gst_path"):
             import subprocess
@@ -660,14 +647,8 @@ class VideoThread(QThread):
             # Strip quotes from gst_path if present before building command
             gst_bin = self.gst_path.strip('"')
             
-            if is_rtmp:
-                # SPECIALIZED RTMP PIPELINE: Requires parsebin for DJI stability 🎯
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
-            elif getattr(self, "relay_mp", False):
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! queue ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
-            else:
-                # Standard UDP-to-Localhost Transcoder
-                cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
+            # Standard UDP-to-Localhost Transcoder
+            cmd = f'"{gst_bin}" -q udpsrc port={target_port} address={target_ip} ! tsdemux ! h264parse ! mpegtsmux ! udpsink host=127.0.0.1 port={self._dynamic_loopback_port} sync=false'
                 
             print(f"Video Recon: Launching Localhost MPEG-TS Transcoder ->\n{cmd}")
             
@@ -689,9 +670,9 @@ class VideoThread(QThread):
             # Cap the internal stream timeout to completely prevent 30-second silent hangs!
             os.environ["OPENCV_FFMPEG_READ_TIMEOUT"] = "2000"
             
-            # OpenCV native connection string targeting our dynamically generated secure port!
             # Annihilate the 5,000,000 byte latency cache using ultra-strict nobuffer FFmpeg arguments
-            ffmpeg_options = f"udp://127.0.0.1:{self._dynamic_loopback_port}?fflags=nobuffer&flags=low_delay&strict=experimental"
+            # threads=1 is CRITICAL: Multi-threaded decoding adds 1-2 frames of 'reorder latency'
+            ffmpeg_options = f"udp://127.0.0.1:{self._dynamic_loopback_port}?fflags=nobuffer&flags=low_delay&strict=experimental&threads=1"
             
             # Robust Dynamic Polling System: Explicitly calls .release() to prevent OpenCV C++ Struct Segfaults!
             retries = 0
@@ -762,8 +743,8 @@ class VideoThread(QThread):
                 # 2.3 MONOTONIC NEAREST-PAST SYNC: Butter-Smooth & 100% Visibility 🧊🚀
                 results, res_ts = self.inference_daemon.get_results() if (self.show_detections and self.inference_daemon) else (None, None)
                 
-                # DISPLAY HEAD: Target timestamp for a smooth flow (150ms delay) 🏎️
-                target_display_ts = time.time() - 0.15
+                # DISPLAY HEAD: Target timestamp for a smooth flow (50ms tactical delay) 🏎️
+                target_display_ts = time.time() - 0.05
                 
                 # Pop old frames while searching for the one closest to our delayed display head
                 while len(self.frame_history) > 1:

@@ -174,7 +174,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     center: [{center_lat}, {center_lon}], zoom: {zoom}, zoomControl: false, attributionControl: false
   }});
   L.control.zoom({{ position: 'topleft' }}).addTo(map);
-  L.tileLayer('{cdn_url}', {{ maxZoom: 19, maxNativeZoom: 17 }}).addTo(map);
+  L.tileLayer('{cdn_url}', {{ maxZoom: 20, maxNativeZoom: 19 }}).addTo(map);
 
   // MISSION STATE
   var isMissionMode = false;

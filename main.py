@@ -3,6 +3,22 @@ import os
 import time
 import json
 import math
+from core.utils import find_binary
+
+# 🛰️ BUNDLE PATH FIX: Ensure the app always finds its models and icons
+# regardless of where it was launched from (Finder, Terminal, or Applications).
+if getattr(sys, 'frozen', False):
+    # PyInstaller creates a temp folder and stores path in _MEIPASS
+    # On Mac onedir, this is typically Contents/Resources
+    if hasattr(sys, '_MEIPASS'):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(sys.executable)
+    os.chdir(base_path)
+else:
+    # If running in development mode
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
 from PySide6.QtWidgets import QApplication
 from ui.main_window import GCSMainWindow
 from video.video_thread import VideoThread
@@ -16,7 +32,14 @@ class LogSignaler(QObject):
 class LogRedirector:
     def __init__(self, signaler):
         self.signaler = signaler
-        self.log_file = open("gcs_crash.log", "w", encoding="utf-8")
+        # Write log to a writable user directory or the app folder if possible
+        try:
+            self.log_file = open("gcs_crash.log", "w", encoding="utf-8")
+        except:
+            # Fallback to a temp location if the app folder is read-only
+            import tempfile
+            log_path = os.path.join(tempfile.gettempdir(), "truegcs_crash.log")
+            self.log_file = open(log_path, "w", encoding="utf-8")
     def write(self, text):
         try:
             self.signaler.log_ready.emit(text)
@@ -26,32 +49,7 @@ class LogRedirector:
     def flush(self): pass
 
 def find_gstreamer():
-    import sys, os
-    if sys.platform == "darwin":
-        # macOS — check Homebrew locations (Apple Silicon first, then Intel)
-        mac_paths = [
-            "/opt/homebrew/bin/gst-launch-1.0",          # Apple Silicon (M1/M2/M3)
-            "/usr/local/bin/gst-launch-1.0",              # Intel Mac via Homebrew
-            "/opt/local/bin/gst-launch-1.0",              # MacPorts fallback
-        ]
-        for p in mac_paths:
-            if os.path.exists(p): return p
-        return "gst-launch-1.0"  # Assume it's on PATH
-    elif sys.platform.startswith("linux"):
-        linux_paths = ["/usr/bin/gst-launch-1.0", "/usr/local/bin/gst-launch-1.0"]
-        for p in linux_paths:
-            if os.path.exists(p): return p
-        return "gst-launch-1.0"
-    else:
-        # Windows
-        common_paths = [
-            r"C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe",
-            r"C:\gstreamer\1.0\x86_64\bin\gst-launch-1.0.exe",
-            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), r"gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe")
-        ]
-        for p in common_paths:
-            if os.path.exists(p): return p
-        return "gst-launch-1.0.exe"
+    return find_binary("gst-launch-1.0")
 
 def main():
     if sys.platform == "win32":
@@ -90,6 +88,7 @@ def main():
     window.drone_armed = {} # { "nid:sid": bool } 🛰️
     node_colors = ['#00ddff', '#ff3366', '#33ff55', '#ffaa00', '#aa00ff', '#ffffff']
     node_counter = [0]
+    window.node_adding_lock = False # Lockout to prevent spam 🔐
     VTOL_MODES = ["STABILIZE", "FBWA", "AUTO", "QLOITER", "QHOVER", "QRTL", "LOITER", "TAKEOFF", "TRANSITION", "CIRCLE", "RTL", "QLAND"]
 
     def get_active_target():
@@ -274,14 +273,26 @@ def main():
 
     # ---- NODE MANAGEMENT ----
     def add_new_node():
+        if window.node_adding_lock:
+            print("Dashboard: Connection attempt already in progress. Please wait.")
+            return
+
         try:
             ctype, device = window.combo_type.currentData()
             baud_rate = 115200
             try: baud_rate = int(window.txt_p1.text())
             except: pass
+            
+            # Start lockout 🔐
+            window.node_adding_lock = True
+            window.btn_add_node.setEnabled(False)
+            
+            # We assign the ID and color now, but we'll 'undo' it or wait for discovery if needed.
+            # Usually, assigning it here is fine as long as we block spam.
             node_counter[0] += 1
             nid = node_counter[0]
             color = node_colors[(nid - 1) % len(node_colors)]
+            
             if ctype == "serial":
                 tel = TelemetryThread(nid, color, connection_string=device, baud=baud_rate)
             elif ctype == "udp":
@@ -290,14 +301,48 @@ def main():
             else:
                 ip = window.txt_p1.text(); port = window.txt_p2.text()
                 tel = TelemetryThread(nid, color, connection_string=f"{ctype}:{ip}:{port}")
+                
             window.telemetry_nodes[nid] = tel
             connect_telemetry_signals(tel)
+            
+            # Watcher for discovery to unlock the button
+            def on_discovery(discovered_nid, sysid, c):
+                if discovered_nid == nid:
+                    window.node_adding_lock = False
+                    window.btn_add_node.setEnabled(True)
+                    window.lbl_status.setText(f"MAVLink: Node {nid} Connected [Drone {sysid}]")
+                    window.lbl_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+                    try: tel.signals.drone_discovered.disconnect(on_discovery)
+                    except: pass
+
+            tel.signals.drone_discovered.connect(on_discovery)
             tel.start()
-            window.lbl_status.setText(f"Added Node {nid} ({ctype})")
-            window.lbl_status.setStyleSheet(f"color: {color}; font-size: 14px;")
+            
+            window.lbl_status.setText(f"Connecting Node {nid}...")
+            window.lbl_status.setStyleSheet(f"color: orange; font-size: 14px;")
+            
+            # Safety Timeout 🛰️
+            def handle_timeout():
+                if window.node_adding_lock and nid in window.telemetry_nodes:
+                    # Check if any drones were discovered. If not, it's a true timeout.
+                    if not tel.known_drones:
+                        print(f"Dashboard: Node {nid} connection timed out. Reclaiming color index.")
+                        window.telemetry_nodes.pop(nid).stop()
+                        node_counter[0] -= 1 # Reclaim the index 🎨
+                        window.node_adding_lock = False
+                        window.btn_add_node.setEnabled(True)
+                        window.lbl_status.setText(f"Node {nid}: Connection Timeout")
+                        window.lbl_status.setStyleSheet("color: red; font-size: 14px;")
+            
+            QTimer.singleShot(10000, handle_timeout) # 10s tactical window for heartbeat discovery
+            
         except Exception as e:
+            node_counter[0] -= 1 # Reclaim the index on crash 🎨
+            window.node_adding_lock = False
+            window.btn_add_node.setEnabled(True)
             window.lbl_status.setText(f"Node Addition Failed")
             window.lbl_status.setStyleSheet("color: red; font-size: 14px;")
+            print(f"Dashboard Error: {e}")
 
     def disconnect_active_node():
         an, as_id = get_active_target()
@@ -425,15 +470,12 @@ def main():
             vtype = window.tab_ops.combo_vid_type.currentText()
             vport = window.tab_ops.txt_vid_port.text().strip()
             host = window.tab_ops.txt_vid_ip.text().strip()
-            
-            if "RTMP" in vtype:
-                src = f"rtmp://{host or '0.0.0.0'}:{vport or '1935'}/live/drone"
-            elif "USB" in vtype:
+            if "USB" in vtype:
                 # Local hardware index (integer) 🏁
                 src = int(vport) if (vport and vport.isdigit()) else 0
             else:
-                protocol = "udp" if "UDP" in vtype else "rtp"
-                src = f"{protocol}://{host or '0.0.0.0'}:{vport or '5008'}"
+                # Default to UDP Stream
+                src = f"udp://{host or '0.0.0.0'}:{vport or '5008'}"
             
             window.video_thread = VideoThread(stream_url=src)
             window.video_thread.gst_path = find_gstreamer()

@@ -2,6 +2,7 @@ import sys
 import os
 import subprocess
 import threading
+from core.utils import find_binary
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QPlainTextEdit, QGroupBox, QSizePolicy
@@ -22,7 +23,19 @@ class DJITab(QWidget):
         self.relay_process = None
         self.signaler = _DJILogSignaler()
         self.signaler.line_received.connect(self._update_log)
+        self.local_ip = self.get_local_ip()
         self.init_ui()
+
+    def get_local_ip(self):
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -40,14 +53,15 @@ class DJITab(QWidget):
         self.txt_rtmp_port = QLineEdit("15560")
         self.txt_rtmp_port.setPlaceholderText("e.g. 15560")
         self.txt_rtmp_port.setFixedWidth(100)
+        self.txt_rtmp_port.textChanged.connect(self._update_rtmp_url_label)
         rtmp_row.addWidget(self.txt_rtmp_port)
         rtmp_row.addStretch()
         
-        url_info = QLabel("Drone RTMP URL: rtmp://<YOUR_IP>:15560/live/drone")
-        url_info.setStyleSheet("color: #888888; font-size: 11px;")
+        self.lbl_rtmp_url = QLabel(f"Drone RTMP URL: rtmp://{self.local_ip}:15560/live/drone")
+        self.lbl_rtmp_url.setStyleSheet("color: #00ddff; font-size: 12px; font-weight: bold;")
         
         cfg_lay.addLayout(rtmp_row)
-        cfg_lay.addWidget(url_info)
+        cfg_lay.addWidget(self.lbl_rtmp_url)
 
         # UDP Output
         udp_row = QHBoxLayout()
@@ -99,6 +113,10 @@ class DJITab(QWidget):
         vbar = self.log_area.verticalScrollBar()
         vbar.setValue(vbar.maximum())
 
+    def _update_rtmp_url_label(self):
+        port = self.txt_rtmp_port.text().strip() or "15560"
+        self.lbl_rtmp_url.setText(f"Drone RTMP URL: rtmp://{self.local_ip}:{port}/live/drone")
+
     def toggle_relay(self):
         if self.relay_process is None:
             self.start_relay()
@@ -109,10 +127,16 @@ class DJITab(QWidget):
         rtmp_port = self.txt_rtmp_port.text().strip()
         udp_port = self.txt_udp_port.text().strip()
 
-        # Build FFmpeg command 🚀
-        # ffmpeg -listen 1 -i rtmp://0.0.0.0:15560/live/drone -c:v copy -f mpegts "udp://127.0.0.1:5008?pkt_size=1316"
+        # Build FFmpeg command 🚀 using the robust binary locator
+        ffmpeg_bin = find_binary("ffmpeg")
+        
         cmd = [
-            "ffmpeg",
+            ffmpeg_bin,
+            "-hide_banner", "-loglevel", "error",
+            "-probesize", "32",
+            "-analyzeduration", "0",
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
             "-listen", "1",
             "-i", f"rtmp://0.0.0.0:{rtmp_port}/live/drone",
             "-c:v", "copy",

@@ -243,10 +243,15 @@ class GCSMainWindow(QMainWindow):
         # The main.py will handle shutting down all telemetry nodes when app exits
         if self.video_thread:
             self.video_thread.stop()
+            self.video_thread.wait(2000) # Wait up to 2s for cleanup 🛡️
+            
         # Stop any running simulation subprocesses 🚀
         if hasattr(self, 'tab_sim'):
             self.tab_sim.stop_all()
+            
         # Stop DJI Relay 🚁
-        if hasattr(self, 'tab_dji'):
-            self.tab_dji.stop_all()
+        if hasattr(self, 'tab_dji') and self.tab_dji.relay_process:
+            self.tab_dji.stop_relay()
+            
         event.accept()
+

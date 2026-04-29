@@ -4,7 +4,7 @@ import subprocess
 import threading
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QLineEdit, QPlainTextEdit, QGroupBox, QScrollArea, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
@@ -61,6 +61,30 @@ class SimInstance(QFrame):
             "border-radius: 4px; padding: 3px 6px; font-size: 12px;"
         )
         row.addWidget(self.txt_port)
+
+        # Airframe Selection 🚀
+        model_lbl = QLabel("Airframe:")
+        model_lbl.setStyleSheet("color: #92b0c3; font-size: 12px; margin-left: 10px;")
+        row.addWidget(model_lbl)
+
+        self.combo_model = QComboBox()
+        self.combo_model.setFixedWidth(140)
+        self.combo_model.setStyleSheet("""
+            QComboBox {
+                background: #05080a; color: #00ddff; border: 1px solid #2a4555;
+                border-radius: 4px; padding: 3px 6px; font-size: 11px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #0d1a24; color: #fff; selection-background-color: #00ddff;
+            }
+        """)
+        self.combo_model.addItem("Tailsitter VTOL (Active)")
+        self.combo_model.addItem("Fixed Wing (Locked)")
+        self.combo_model.addItem("Quadcopter (Locked)")
+        self.combo_model.model().item(1).setEnabled(False) # Road-map placeholders 🧱
+        self.combo_model.model().item(2).setEnabled(False)
+        row.addWidget(self.combo_model)
 
         # Launch button
         self.btn_launch = QPushButton("▶ Launch")
@@ -122,7 +146,7 @@ class SimInstance(QFrame):
             "simulation", "vtol_sim.py"
         )
 
-        self._log(f"[SIM {self._id}] Launching on UDP:{port} ...")
+        self._log(f"[SIM {self._id}] Launching {self.combo_model.currentText()} on UDP:{port} ...")
         try:
             self._process = subprocess.Popen(
                 [python_exe, sim_script, "--port", str(port)],
@@ -173,6 +197,7 @@ class SimInstance(QFrame):
         self.btn_launch.setEnabled(not running)
         self.btn_stop.setEnabled(running)
         self.txt_port.setEnabled(not running)
+        self.combo_model.setEnabled(not running) # Lock selection 🔐
         self.btn_remove.setEnabled(not running)
         if running:
             self.dot.setStyleSheet("color: #33ff55; font-size: 14px;")

@@ -1,12 +1,37 @@
-# TrueGCS — ISR Ground Control Station
+# TrueGCS — Hardened ISR Ground Control Station
 
-> A multi-drone, multi-link Ground Control Station built on MAVLink, PySide6, and YOLOv8.  
-> Designed for VTOL fixed-wing platforms with tactical ISR mission support.
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![PySide6](https://img.shields.io/badge/Qt-41CD52?style=for-the-badge&logo=qt&logoColor=white)
+![YOLOv8](https://img.shields.io/badge/YOLOv8-00A9E0?style=for-the-badge&logo=ultralytics&logoColor=white)
+![MAVLink](https://img.shields.io/badge/MAVLink-2.0-blue?style=for-the-badge)
+![DJI](https://img.shields.io/badge/DJI-SDK_V5-black?style=for-the-badge&logo=dji&logoColor=white)
+
+> A professional-grade, high-security multi-drone Ground Control Station.  
+> Built on MAVLink, PySide6, and the **Cython-Hardened** TrueGCS Core.
 
 ---
 
-## Screenshots
+## 🛡️ High-Security Architecture
 
+TrueGCS is designed for sensitive ISR operations where code integrity and model protection are paramount.
+
+- **Cython Shield**: Core logic (`core/`, `telemetry/`, `video/`) is compiled into machine-code binaries (`.so`/`.pyd`) during build. This prevents reverse engineering and ensures near-native execution performance.
+- **TrueShield™ Model Protection**: AI weights are protected with AES-256 encryption. Models are only decrypted in volatile memory or hidden temporary structures, never stored as plain `.pt` files in production builds.
+- **Bundle-Aware Security**: Fully compatible with macOS `.app` and Windows `.exe` distributions. Uses a secure path-resolution system (`sys._MEIPASS`) for internal resource integrity.
+
+---
+
+## 🚁 DJI Native Support (New)
+
+TrueGCS now supports **DJI Mini 3** and **Mini 3 Pro** platforms via the custom **Android MAVLink Bridge**. This allows tactical ISR features (AI tracking, hardened telemetry) to be used with standard DJI hardware.
+
+- **Bidirectional MAVLink Translation**: Translates GCS Mount Control commands to DJI SDK speed/angle rotations.
+- **High-Frequency Feedback**: 10Hz attitude and GPS telemetry streaming from the drone to the GCS.
+- **Rate-Based Gimbal Tracking**: Utilizes a precision P-controller to eliminate mechanical overshoot during AI target acquisition.
+
+---
+
+## ## Screenshots
 
 | Swarm Simulation | Simulation Controller |
 |:-:|:-:|
@@ -18,81 +43,81 @@
 
 ---
 
-## Features
+## ✨ Features
 
-### 🗺️ Operations
-- **Live map** with offline tile server — works without internet
-- **Drone icon** with real-time heading and position tracking
-- **HUD overlay** — Speed, Altitude, Battery, Mode, EKF status, Lidar range
-- **Sensor side panel** — GPS, GPS2/TRN, Lidar, EKF, Nav, Vision telemetry
-- **Mission planner** — click-to-place waypoints, speed per waypoint, upload to drone
-- **Takeoff / Start Mission** commands
+### 📡 Tactical Operations
+- **Low-Latency Video Engine**: Optimized DJI RTMP-to-UDP relay with `threads=1` single-threaded decoding to eliminate frame-reordering lag.
+- **High-Res Map Engine**: Leaflet-based map utilizing **Esri World Imagery** with native zoom support up to level 19 for pin-sharp reconnaissance.
+- **Multi-Drone Command**: Unlimited concurrent MAVLink links with auto-discovery and color-coded telemetry streams.
+- **Mission Planner**: Tactical waypoint placement with per-point altitude and speed control.
+- **HUD Overlay**: Speed, Altitude, Battery, Mode, EKF status, Lidar range, and high-frequency sensor diagnostics.
 
-### 📡 Multi-Node Telemetry
-- **Unlimited concurrent drone links** — Serial, UDP, or TCP per node
-- **Auto-discovery** — drones are detected from heartbeats, not configured manually
-- **Color-coded nodes** — each link gets a unique colour assigned on first contact
-- **Connection timeout guard** — failed links auto-clean after 5 seconds
-- **Single-click disconnect** per node
-
-### 🎥 Video & Detection
-- UDP / RTMP / RTP / USB camera input
-- **YOLO26 / YOLO26s / YOLO26-1536px** AI object detection — custom-trained on VisDrone dataset
-- **Click-to-track** — nearest detection, pixel seed, or centre slew modes
-- Gimbal / mount control via MAVLink DO_MOUNT_CONTROL
-- GPS-tagged target overlay on map
+### 🎥 AI Reconnaissance
+- **YOLO26 ISR Models**: Custom-trained weights optimized for aerial vehicle and person detection (VisDrone-v2).
+- **Monotonic Sync**: Advanced frame-matching logic that synchronizes AI detection overlays with live video feeds at a tactical 50ms offset.
+- **Gimbal Tracking**: PID-based target locking with support for `DO_MOUNT_CONTROL` MAVLink commands.
+- **Click-to-track**: Nearest detection, pixel seed, or centre slew modes for rapid target acquisition.
 
 ### 🛩️ Simulation
-- Built-in **VTOL SITL simulator** (`simulation/vtol_sim.py`)
-- Launch **multiple independent simulation instances** concurrently from the GCS UI
-- Each sim runs on a configurable UDP port
-- Live log streaming per instance
-- Simulates: armed/disarmed state, waypoint navigation, VTOL transition, RTL, QRTL, loiter, GPS denial
-
-### ⚙️ Configuration
-- Full ArduPilot parameter browser — fetch, edit, and write parameters live
-- **EnumSelector / BitmaskSelector** — curated dropdowns for known parameters
-- Grouped parameter tree with 361 pre-loaded metadata groups
-- Progress bar for full parameter list fetch
-
-### 🎮 Flight Controls
-- **Arm / Disarm** button with live state sync
-- **Flight mode selector** — populated from vehicle's own mode map
-- Arm state persisted per drone across multi-drone sessions
+- Built-in **VTOL SITL simulator** with multi-instance support.
+- Launch multiple drones concurrently from the UI for swarm training.
+- Simulates: GPS denial, VTOL transitions, and complex mission fail-safes.
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
+```mermaid
+graph TD
+    subgraph "TrueGCS (GCS)"
+        A[main.py] --> B[Telemetry Thread]
+        A --> C[Video Thread]
+        C --> D[YOLOv8 Inference]
+        C --> E[PID Gimbal Controller]
+    end
+
+    subgraph "Android Bridge (DJI-DEV)"
+        F[StreamingManager]
+        G[DJI SDK V5]
+    end
+
+    subgraph "Hardware"
+        H[DJI Mini 3 / Pro]
+    end
+
+    B <-- "MAVLink over UDP" --> F
+    E -- "Mount Control Commands" --> F
+    F <-- "DJI SDK Protocols" --> G
+    G <-- "Link" --> H
+    H -- "Video/Attitude/GPS" --> G
 ```
+
+```text
 TrueGCS/
-├── main.py                  # App entry point, signal wiring, node manager
-├── models/                  # Consolidated AI model weights (.pt files)
-├── ui/
-│   ├── main_window.py       # Main window, connection bar, window geometry
-│   ├── tabs_ops.py          # Operations tab (map, HUD, video controls)
-│   ├── tabs_video.py        # Video & Detection tab
-│   ├── tabs_cfg.py          # Configuration / parameter tab
-│   ├── tabs_sim.py          # Simulation tab (multi-instance SITL launcher)
-│   ├── hud_overlay.py       # Floating HUD and sensor panel widgets
-│   ├── map_widget.py        # QWebEngineView map with Leaflet.js
-│   └── styles.py            # Global QSS stylesheet
-├── telemetry/
-│   └── mavlink_thread.py    # MAVLink receive/transmit thread per node
-├── video/
-│   └── video_thread.py      # Video decode, YOLO26 inference, gimbal control
-├── gimbal/
-│   └── mount_tracker.py     # PID-based gimbal tracking controller
-├── simulation/
-│   ├── vtol_sim.py          # VTOL SITL simulator (MAVLink 2.0 broadcast)
-│   └── sim_config.json      # Simulator network/drone configuration
-└── core/
-    └── pid_controller.py    # Generic PID controller
+├── main.py                  # Secure entry point (Bundle-Aware)
+├── core/
+│   ├── shield.py            # TrueShield™ Encryption/Decryption Layer
+│   ├── utils.py             # Robust Binary Locator (FFmpeg/GStreamer)
+│   └── tile_cache.py        # Offline Tile Server & CDN Fallback
+├── telemetry/               # [Cython Compiled] MAVLink Node Logic
+├── video/                   # [Cython Compiled] AI Inference & GStreamer Pipeline
+├── gimbal/                  # PID-based Mount Tracking
+├── ui/                      # Professional PySide6 Dark-Mode Interface
+└── models/                  # Shielded AI Weights (.tsm format)
 ```
 
 ---
 
-## Requirements
+## 🚀 Performance Tuning
+
+TrueGCS is pre-tuned for zero-lag performance:
+- **Relay**: `-probesize 32 -analyzeduration 0` for instant stream start.
+- **Decoder**: `-fflags nobuffer -flags low_delay` for real-time situational awareness.
+- **Map**: Local Tile Server fallback for offline "Grid-Down" operations.
+
+---
+
+## ⚙️ Requirements
 
 | Dependency | Version |
 |---|---|
@@ -100,85 +125,17 @@ TrueGCS/
 | PySide6 | ≥ 6.5.0 |
 | pymavlink | ≥ 2.4.40 |
 | opencv-python | ≥ 4.8.0 |
-| ultralytics (YOLOv8) | ≥ 8.0.0 |
-| numpy | ≥ 1.24.0 |
-| requests | ≥ 2.31.0 |
+| ultralytics | ≥ 8.0.0 |
+| Cython | ≥ 3.0.0 |
+| cryptography | ≥ 41.0.0 |
 
 ---
 
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/True2456/TrueGCS.git
-cd TrueGCS
-
-# Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate        # macOS / Linux
-# venv\Scripts\activate         # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
----
-
-## Running
-
-```bash
-source venv/bin/activate && python main.py
-```
-
----
-
-## Connecting a Drone
-
-1. Select your connection type in the top bar — **Serial**, **UDP**, or **TCP**
-2. Set the baud rate (Serial) or port (UDP/TCP)
-3. Click **+ Add** — the GCS will attempt to connect for 5 seconds
-4. On success, the drone appears in the **Active Target** dropdown with its assigned colour
-5. Arm, set mode, and fly
-
----
-
-## Running the Simulation
-
-### From the GCS UI (recommended)
-1. Go to the **Simulation** tab
-2. Set a UDP port (default `14550`)
-3. Click **▶ Launch** — the sim starts broadcasting heartbeats
-4. Switch to **Operations**, select **UDP** in the NODE bar, enter the same port, click **+ Add**
-5. The simulated drone is discovered and appears on the map
-
-### Multiple concurrent drones
-1. Click **＋ Add Simulation** to add more instances (each needs a unique port)
-2. Launch all instances, then add a matching UDP node for each in the connection bar
-
-### From the terminal
-```bash
-source venv/bin/activate && python simulation/vtol_sim.py
-# or on a custom port:
-source venv/bin/activate && python simulation/vtol_sim.py --port 14551
-```
-
----
-
-## Platform Support
-
-| Platform | Status |
-|---|---|
-| macOS (Apple Silicon / Intel) | ✅ Tested |
-| Windows 10 / 11 | ✅ Tested |
-| Linux (Ubuntu 22.04+) | ✅ Should work |
-
----
-
-## License
+## ⚖️ License
 
 Copyright (c) 2025 True2456. All rights reserved.
 
 This software is provided for personal, non-commercial, and evaluation use only.  
-Commercial use, modification, redistribution, and incorporation into other projects are strictly prohibited without prior written permission from the copyright holder.
+**High-Security Release**: Commercial use, redistribution, or decompilation is strictly prohibited without prior written permission from the copyright holder.
 
 See [LICENSE](LICENSE) for full terms.

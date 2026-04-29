@@ -3,11 +3,16 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.so
+*.c
 
 # Dependencies
 venv/
 env/
 .env
+build/
+dist/
+obfuscated/
 
 # Cache and Data
 cache/

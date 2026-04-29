@@ -81,7 +81,7 @@ class OpsTab(QWidget):
         # Row 1: Connection Settings
         vid_ctrl_layout1.addWidget(QLabel("TYPE:"))
         self.combo_vid_type = QComboBox()
-        self.combo_vid_type.addItems(["UDP Stream", "USB Sensor", "RTP Stream", "RTMP Server (DJI)"])
+        self.combo_vid_type.addItems(["UDP Stream", "USB Sensor"])
         self.combo_vid_type.setFixedWidth(140)
         self.combo_vid_type.currentIndexChanged.connect(self._on_vid_type_changed)
         vid_ctrl_layout1.addWidget(self.combo_vid_type)
@@ -313,37 +313,19 @@ class OpsTab(QWidget):
 
     def _on_vid_type_changed(self, index):
         type_str = self.combo_vid_type.currentText()
-        if "RTMP" in type_str:
-            import socket
-            try:
-                # Determine local IP for drone connection
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                local_ip = s.getsockname()[0]
-                s.close()
-            except:
-                local_ip = "127.0.0.1"
-                
-            url = f"rtmp://{local_ip}:1935/live/drone"
-            self.lbl_stream_url.setText(f"POINT DJI DRONE TO: {url}")
-            self.lbl_stream_url.setVisible(True)
-            # Default RTMP port for DJI
-            self.txt_vid_port.setText("1935")
-            self.txt_vid_ip.setText(local_ip)
+        self.lbl_stream_url.setVisible(False)
+        if "USB" in type_str:
+            self.txt_vid_port.setText("0")
+            self.lbl_vid_ip.setVisible(False)
+            self.txt_vid_ip.setVisible(False)
+            self.lbl_vid_port.setText("INDEX:")
         else:
-            self.lbl_stream_url.setVisible(False)
-            if "USB" in type_str:
-                self.txt_vid_port.setText("0")
-                self.lbl_vid_ip.setVisible(False)
-                self.txt_vid_ip.setVisible(False)
-                self.lbl_vid_port.setText("INDEX:")
-            else:
-                self.lbl_vid_ip.setVisible(True)
-                self.txt_vid_ip.setVisible(True)
-                self.lbl_vid_port.setText("PORT:")
-                if "UDP" in type_str:
-                    self.txt_vid_port.setText("5008")
-                    self.txt_vid_ip.setText("0.0.0.0")
+            self.lbl_vid_ip.setVisible(True)
+            self.txt_vid_ip.setVisible(True)
+            self.lbl_vid_port.setText("PORT:")
+            if "UDP" in type_str:
+                self.txt_vid_port.setText("5008")
+                self.txt_vid_ip.setText("0.0.0.0")
 
     def update_target_status(self, status, off_x, off_y, conf):
         self.lbl_tgt_status.setText(status)
