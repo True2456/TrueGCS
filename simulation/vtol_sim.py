@@ -4,11 +4,15 @@ import json
 import threading
 import socket
 import os
+import sys
+import signal
 os.environ['MAVLINK20'] = '1'
 from pymavlink import mavutil
 
 class TailsitterSim:
-    def __init__(self, config_path=None):
+    def __init__(self, port=14550, config_path=None):
+        signal.signal(signal.SIGTERM, self.stop)
+        signal.signal(signal.SIGINT, self.stop)
         if config_path is None:
             # Locate relative to script 🚀
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -56,20 +60,17 @@ class TailsitterSim:
         self.target_speed_ms = self.drone_cfg["cruise_speed_ms"]
         
         # Multi-Link Configuration: Active Broadcast to multiple GCS Sinks 🛰️
-        # Port 1: Primary GCS (14550)
         self.sysid = self.drone_cfg["sysid"]
-        self.gcs_target = (self.net_cfg["gcs_ip"], self.net_cfg["gcs_port"])
-        self.nav_port = self.net_cfg["listen_port"] # Port where Visual Nav expects to receive 🛰️
+        self.nav_port = port + 1 
         
         self.conns = []
-        # Target 1: GCS (Broadcast out)
-        self.conns.append(mavutil.mavlink_connection(f"udpout:{self.gcs_target[0]}:{self.gcs_target[1]}", source_system=self.sysid))
+        # Target 1: GCS (Broadcast out to dynamic port)
+        self.conns.append(mavutil.mavlink_connection(f"udpout:{self.net_cfg['gcs_ip']}:{port}", source_system=self.sysid))
         
-        # Target 2: Visual Navigation / TRN (Broadcast out to Localhost 14551)
-        # This allows the nav software to receive telemetry passively 🛰️
+        # Target 2: Visual Navigation / TRN (SITL Offset)
         self.conns.append(mavutil.mavlink_connection(f"udpout:127.0.0.1:{self.nav_port}", source_system=self.sysid))
         
-        # Target 3: Command Listener (Incoming from any software)
+        # Target 3: Command Listener (Incoming)
         self.conns.append(mavutil.mavlink_connection(f"udpin:0.0.0.0:{self.nav_port}", source_system=self.sysid))
         
         self.running = True
@@ -92,6 +93,15 @@ class TailsitterSim:
         if bearing < 0: bearing += 360.0
         return bearing
         
+    def stop(self, *args):
+        print("Mission SITL: Shutting down...", flush=True)
+        self.running = False
+        with self.lock:
+            for conn in self.conns:
+                try: conn.close()
+                except: pass
+        sys.exit(0)
+
     def run(self):
         print(f"Mission SITL: Twister Dual-Engine Simulator Active at {self.lat}, {self.lon}")
         print(f"MAVLink 2.0 Broadcast: {self.net_cfg['gcs_ip']}:{self.net_cfg['gcs_port']}")
@@ -650,5 +660,9 @@ class TailsitterSim:
         return int((time.time() - self.start_time) * 1000)
 
 if __name__ == "__main__":
-    sim = TailsitterSim()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=14550)
+    args = parser.parse_args()
+    sim = TailsitterSim(port=args.port)
     sim.run()

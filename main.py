@@ -25,6 +25,7 @@ from video.video_thread import VideoThread
 from telemetry.mavlink_thread import TelemetryThread
 from PySide6.QtCore import QTimer, QObject, Signal
 from gimbal.mount_tracker import MountTrackerController, MountTrackerConfig
+from core.fleet_brain_observer import FleetBrainObserver
 
 class LogSignaler(QObject):
     log_ready = Signal(str)
@@ -84,6 +85,7 @@ def main():
     
     # ---- GLOBAL NODE MANAGER ----
     window.telemetry_nodes = {}
+    window.fleet_observer = FleetBrainObserver(window)
     window.drone_headings = {}
     window.drone_armed = {} # { "nid:sid": bool } 🛰️
     node_colors = ['#00ddff', '#ff3366', '#33ff55', '#ffaa00', '#aa00ff', '#ffffff']
@@ -270,6 +272,7 @@ def main():
         tel.signals.parameter_progress.connect(r_param_prog)
         tel.signals.modes_available.connect(r_modes_avail)
         tel.signals.armed_status_changed.connect(r_armed_status)
+        if hasattr(window, 'fleet_observer'): window.fleet_observer.sync_node(tel)
 
     # ---- NODE MANAGEMENT ----
     def add_new_node():
@@ -367,7 +370,8 @@ def main():
         try:
             wps = json.loads(wp_json)
             if ":" not in target_id: return
-            nid, sid = map(int, target_id.split(":"))
+            nid, sid = target_id.split(":", 1)
+            sid = int(sid)
             
             if nid in window.telemetry_nodes:
                 window.telemetry_nodes[nid].upload_mission(sid, wps)
@@ -444,6 +448,10 @@ def main():
             window.combo_mode.setCurrentText(tel._last_mode.get(as_id, ""))
             window.combo_mode.blockSignals(False)
             window.lbl_status.setText(f"Focus: Node {an} SysID {as_id}")
+            
+            # Sync to Map Mission Planner 🛰️🗺️
+            active_name = window.combo_target_drone.currentText()
+            window.tab_ops.map_widget.set_active_drone(an, as_id, active_name)
 
     window.combo_target_drone.currentIndexChanged.connect(on_active_drone_changed)
 

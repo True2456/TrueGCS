@@ -106,20 +106,22 @@ class TelemetryThread(QThread):
                                 self.signals.drone_lost.emit(self.node_id, s_id)
 
                     # --- MISSION PROTOCOL HANDLING ---
-                    if msg_type == 'MISSION_REQUEST':
+                    if msg_type in ('MISSION_REQUEST', 'MISSION_REQUEST_INT'):
                         seq = msg.seq
                         if sysid in self._pending_missions and seq < len(self._pending_missions[sysid]):
                             wp = self._pending_missions[sysid][seq]
-                            # Send Mission Item
+                            print(f"Telemetry [{self.node_id}]: Fulfilling Mission Request (Seq {seq}) for SysID {sysid}")
                             with self.lock:
                                 self.master.mav.mission_item_int_send(
                                     sysid, msg.target_component, seq,
                                     wp['frame'], wp['command'], wp['current'], wp['autocontinue'],
                                     wp['param1'], wp['param2'], wp['param3'], wp['param4'],
-                                    int(wp['x'] * 1e7), int(wp['y'] * 1e7), wp['z']
+                                    int(wp['x'] * 1e7), int(wp['y'] * 1e7), float(wp['z'])
                                 )
+                        else:
+                            print(f"Telemetry [{self.node_id}]: REJECTED Mission Request (Seq {seq}) for SysID {sysid}")
                     
-                    if msg_type == 'MISSION_ACK':
+                    elif msg_type == 'MISSION_ACK':
                         if msg.type == mavutil.mavlink.MAV_MISSION_ACCEPTED:
                             self.signals.status_text_updated.emit(self.node_id, sysid, "MISSION UPLOADED")
                         else:
@@ -127,7 +129,7 @@ class TelemetryThread(QThread):
                         if sysid in self._pending_missions:
                             del self._pending_missions[sysid]
 
-                    if msg_type == 'GLOBAL_POSITION_INT':
+                    elif msg_type == 'GLOBAL_POSITION_INT':
                         lat = msg.lat / 1e7
                         lon = msg.lon / 1e7
                         alt = msg.relative_alt / 1000.0 # meters
@@ -243,28 +245,6 @@ class TelemetryThread(QThread):
                         
                         if self.params_received[sysid] >= self.total_params[sysid] and self.total_params[sysid] > 0:
                             self.signals.parameters_loaded.emit(self.node_id, sysid)
-
-                    elif msg_type in ('MISSION_REQUEST', 'MISSION_REQUEST_INT'):
-                        seq = msg.seq
-                        if sysid in self._pending_missions and seq < len(self._pending_missions[sysid]):
-                            wp = self._pending_missions[sysid][seq]
-                            print(f"Telemetry [{self.node_id}]: Fulfilling Mission Request (Seq {seq}) for SysID {sysid}")
-                            with self.lock:
-                                self.master.mav.mission_item_int_send(
-                                    sysid, self.master.target_component,
-                                    seq,
-                                    wp['frame'],
-                                    wp['command'],
-                                    wp['current'],
-                                    wp['autocontinue'],
-                                    wp['param1'], wp['param2'], wp['param3'], wp['param4'],
-                                    int(wp['x'] * 1e7), int(wp['y'] * 1e7), float(wp['z'])
-                                )
-                        else:
-                            print(f"Telemetry [{self.node_id}]: REJECTED Mission Request (Seq {seq}) for SysID {sysid}")
-
-                    elif msg_type == 'MISSION_ACK':
-                        print(f"Telemetry [{self.node_id}]: Mission ACK Result -> {msg.type}")
 
                 except Exception as e:
                     print(f"MAVLink message process error: {e}")

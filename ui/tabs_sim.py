@@ -79,11 +79,10 @@ class SimInstance(QFrame):
                 background-color: #0d1a24; color: #fff; selection-background-color: #00ddff;
             }
         """)
-        self.combo_model.addItem("Tailsitter VTOL (Active)")
+        self.combo_model.addItem("Tailsitter VTOL")
+        self.combo_model.addItem("Quadcopter")
         self.combo_model.addItem("Fixed Wing (Locked)")
-        self.combo_model.addItem("Quadcopter (Locked)")
-        self.combo_model.model().item(1).setEnabled(False) # Road-map placeholders 🧱
-        self.combo_model.model().item(2).setEnabled(False)
+        self.combo_model.model().item(2).setEnabled(False) # Road-map placeholders 🧱
         row.addWidget(self.combo_model)
 
         # Launch button
@@ -141,12 +140,15 @@ class SimInstance(QFrame):
             return
 
         python_exe = sys.executable
-        sim_script = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "simulation", "vtol_sim.py"
-        )
+        model_type = self.combo_model.currentText()
+        if "Tailsitter" in model_type:
+            sim_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "simulation", "vtol_sim.py")
+        elif "Quadcopter" in model_type:
+            sim_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "simulation", "quad_sim.py")
+        else:
+            sim_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "simulation", "vtol_sim.py")
 
-        self._log(f"[SIM {self._id}] Launching {self.combo_model.currentText()} on UDP:{port} ...")
+        self._log(f"[SIM {self._id}] Launching {model_type} on UDP:{port} ...")
         try:
             self._process = subprocess.Popen(
                 [python_exe, sim_script, "--port", str(port)],

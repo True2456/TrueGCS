@@ -36,7 +36,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   #mission-panel {{
     position: absolute; top: 10px; right: -320px; bottom: 10px; width: 300px;
     background: rgba(9, 21, 28, 0.96); border: 1px solid rgba(0, 221, 255, 0.35);
-    z-index: 2000; border-radius: 10px; display: flex; flex-direction: column;
+    z-index: 6000; border-radius: 10px; display: flex; flex-direction: column;
     box-shadow: -10px 0 30px rgba(0,0,0,0.85); transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     backdrop-filter: blur(12px);
   }}
@@ -124,12 +124,12 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   }}
   
   #mission-toggle-btn {{
-     position: absolute; top: 10px; right: 10px; z-index: 1000;
-     background: rgba(9, 21, 28, 0.94); border: 1px solid #00ddff; color: #00ddff;
-     padding: 8px 18px; border-radius: 6px; font-weight: bold; font-size: 12px;
-     cursor: pointer; letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }}
+      position: absolute; top: 10px; right: 10px; z-index: 5000;
+      background: rgba(9, 21, 28, 0.94); border: 1px solid #00ddff; color: #00ddff;
+      padding: 8px 18px; border-radius: 6px; font-weight: bold; font-size: 12px;
+      cursor: pointer; letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+   }}
   #mission-toggle-btn:hover {{ background: #00ddff; color: #000; }}
 </style>
 </head>
@@ -145,11 +145,8 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   <div id="mission-list"></div>
   <div class="panel-footer">
     <div style="display: flex; flex-direction: column; gap: 5px; margin-bottom: 5px;">
-        <label style="font-size: 9px; color: #00ddff; font-weight: bold;">TARGET DRONE:</label>
-        <div class="drone-sel-row">
-           <div id="custom-target-select" onclick="toggleTargetPopup()">-- NO TARGET --</div>
-           <div id="drone-options-popup"></div>
-        </div>
+        <label style="font-size: 9px; color: #00ddff; font-weight: bold; opacity: 0.8;">SELECTED TARGET:</label>
+        <div id="custom-target-display" style="color: #fff; font-size: 11px; padding: 5px 0; font-weight: bold;">-- NO TARGET --</div>
     </div>
     <div style="display: flex; gap: 8px; margin-bottom: 8px;">
         <button class="btn-mission btn-clear" onclick="clearMission()">CLEAR</button>
@@ -338,6 +335,13 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     if (bridge) bridge.on_start_mission_request(selectedDroneId);
   }}
 
+  function setActiveDrone(id, name) {{
+    selectedDroneId = id;
+    var display = document.getElementById('custom-target-display');
+    if (display) display.textContent = name;
+    console.log("Map: Active Target Synced -> " + name + " (" + id + ")");
+  }}
+
   function setAvailableDrones(dronesJson) {{
     var drones = JSON.parse(dronesJson);
     var popup = document.getElementById('drone-options-popup');
@@ -451,6 +455,11 @@ class SatelliteMapWidget(QWidget):
     def update_drone_list(self, drones):
         import json
         js = f"setAvailableDrones('{json.dumps(drones)}');"
+        self._web_view.page().runJavaScript(js)
+
+    def set_active_drone(self, node_id, sysid, name):
+        target_id = f"{node_id}:{sysid}"
+        js = f"setActiveDrone('{target_id}', '{name}');"
         self._web_view.page().runJavaScript(js)
 
     def update_drone_position(self, node_id, sysid, lat, lon, heading=None, color="#00ddff"):
