@@ -121,7 +121,7 @@ class BrainClient(QObject):
     def _start_timers(self):
         def telemetry_loop():
             while True:
-                time.sleep(2)
+                time.sleep(1) # High-fidelity 1Hz pulse 🛰️
                 self.emit_telemetry_batch()
         
         def heartbeat_loop():
@@ -163,6 +163,10 @@ class BrainClient(QObject):
                 "lon": lon,
                 "alt": alt
             })
+            
+            # Sync tactical color if available 🛰️
+            if nid in self.nodes:
+                self.latest_telemetry[sid_key]["color"] = self.nodes[nid].color
 
     @Slot(int, int, float, float, float, str)
     def update_hud(self, nid, sysid, speed, battery, alt, mode):
@@ -180,6 +184,10 @@ class BrainClient(QObject):
                 "mode": mode,
                 "sats": 0 # Placeholder if not in hud signal
             })
+
+            # Sync tactical color if available 🛰️
+            if nid in self.nodes:
+                self.latest_telemetry[sid_key]["color"] = self.nodes[nid].color
 
     def set_video_config(self, config):
         """
