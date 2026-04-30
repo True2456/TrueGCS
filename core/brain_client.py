@@ -56,35 +56,83 @@ class BrainClient(QObject):
             print("Brain: Disconnected from server")
             self.connected = False
 
-        @self.sio.on('brain:command')
+        @self.sio.on('brain:command_relay')
         def on_command(data):
             """
             Receives a command from the Brain and executes it on the GCS.
-            Format: { "node_id": 1, "sysid": 1, "command": "arm", "params": {...} }
+            Format: { "station_id": "...", "drone_id": "nid_sysid", "command": "takeoff", "params": {...} }
             """
+            # Only handle commands addressed to this station
+            if data.get("station_id") != self.station_id:
+                return
             print(f"Brain: Received remote command: {data}")
             self._execute_command(data)
+
+        @self.sio.on('brain:mission_relay')
+        def on_mission_relay(data):
+            """
+            Receives a survey mission from the Brain and uploads it to the target drone.
+            Format: { "station_id": "...", "drone_id": "nid_sysid", "waypoints": [{lat,lng,alt,speed}] }
+            """
+            # Only handle missions addressed to this station
+            if data.get("station_id") != self.station_id:
+                return
+            drone_id = data.get("drone_id", "")
+            waypoints = data.get("waypoints", [])
+            try:
+                # drone_id is "nid_sysid" e.g. "0_1"
+                parts = str(drone_id).split("_")
+                nid = parts[0]          # string node id
+                sysid = int(parts[1])   # MAVLink system id
+            except (IndexError, ValueError):
+                print(f"Brain: Invalid drone_id format: {drone_id}")
+                return
+            # Normalise field name: Brain sends 'lng', upload_mission expects 'lon'
+            for wp in waypoints:
+                if 'lng' in wp and 'lon' not in wp:
+                    wp['lon'] = wp.pop('lng')
+                if 'speed' not in wp:
+                    wp['speed'] = 15  # sensible default m/s
+            print(f"Brain: Mission relay → node={nid} sysid={sysid} ({len(waypoints)} waypoints)")
+            if callable(self.on_mission_received):
+                self.on_mission_received(nid, sysid, waypoints)
 
         @self.sio.on('*')
         def catch_all(event, data):
             # Ignore other events
             pass
 
+        # Callback set externally by FleetBrainObserver
+        self.on_mission_received = None
+
     def register_node(self, node_id, thread):
         """Register a MAVLink thread so the brain can send commands to it."""
         self.nodes[node_id] = thread
 
     def _execute_command(self, data):
-        node_id = data.get("node_id")
-        sysid = data.get("sysid")
+        drone_id = data.get("drone_id", "")
         cmd = data.get("command")
         params = data.get("params", {})
 
-        if node_id not in self.nodes:
-            print(f"Brain Error: Node {node_id} not found in GCS.")
+        try:
+            parts = str(drone_id).split("_")
+            nid = parts[0]
+            sysid = int(parts[1])
+        except (IndexError, ValueError):
+            print(f"Brain Error: Invalid drone_id format: '{drone_id}'")
             return
 
-        tel = self.nodes[node_id]
+        # self.nodes uses int keys sometimes, so try int first, then string
+        tel = self.nodes.get(nid)
+        if tel is None:
+            try:
+                tel = self.nodes.get(int(nid))
+            except (ValueError, TypeError):
+                pass
+                
+        if tel is None:
+            print(f"Brain Error: Node '{nid}' not found in GCS. Available: {list(self.nodes.keys())}")
+            return
         
         try:
             if cmd == "arm":
@@ -211,7 +259,6 @@ class BrainClient(QObject):
                 return
             
             # Emit full fleet map to prevent overwriting at the server 🛰️
-            print(f"Brain: Pulsing Telemetry Batch for {len(self.latest_telemetry)} drones...")
             self.sio.emit('telemetry:batch', {
                 "station_id": self.station_id,
                 "telemetry": self.latest_telemetry

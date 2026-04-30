@@ -16,6 +16,9 @@ class FleetBrainObserver(QObject):
         # We need to bridge incoming commands to the GCS window's existing handlers
         self.brain.nodes = self.window.telemetry_nodes # Live link to nodes
         
+        # Wire Brain mission relay to the GCS upload pipeline 🛰️
+        self.brain.on_mission_received = self.upload_search_mission
+        
         # Intercept node discovery to sync with the brain
         self._wrap_signal_connections()
         
@@ -36,3 +39,25 @@ class FleetBrainObserver(QObject):
         tel.signals.hud_updated.connect(self.brain.update_hud)
         self.brain.register_node(tel.node_id, tel)
         print(f"FleetObserver: Node {tel.node_id} linked to Brain.")
+
+    def upload_search_mission(self, nid, sysid, waypoints):
+        """
+        Called when the Brain relays a survey mission.
+        nid: str node ID (e.g. "1") — telemetry_nodes may use int keys
+        sysid: int MAVLink system ID (e.g. 1)
+        waypoints: list of {lat, lon, alt, speed}
+        """
+        # telemetry_nodes keys may be int or str — try both
+        tel = self.window.telemetry_nodes.get(nid)
+        if tel is None:
+            try:
+                tel = self.window.telemetry_nodes.get(int(nid))
+            except (ValueError, TypeError):
+                pass
+        if tel is None:
+            print(f"FleetObserver: Mission rejected — node '{nid}' not found. "
+                  f"Available: {list(self.window.telemetry_nodes.keys())} "
+                  f"(types: {[type(k).__name__ for k in self.window.telemetry_nodes.keys()]})")
+            return
+        print(f"FleetObserver: Uploading {len(waypoints)} waypoints to Node {nid} SysID {sysid}")
+        tel.upload_mission(int(sysid), waypoints)

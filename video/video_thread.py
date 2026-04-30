@@ -194,9 +194,10 @@ class VideoThread(QThread):
     ai_ready = Signal(str, str) # Emitted when model is fully loaded and optimized 🚀
     ai_diag_updated = Signal(str, float, float) # (status/model, ingest_fps, inference_fps) 📈
     
-    def __init__(self, stream_url="udp://@:5010", parent=None):
+    def __init__(self, stream_url="udp://@:5010", brain_client=None, parent=None):
         super().__init__(parent)
         self.stream_url = str(stream_url)
+        self.brain_client = brain_client
         self.running = True
         
         self._current_engine = "CPU"
@@ -905,6 +906,29 @@ class VideoThread(QThread):
                 bytes_per_line = ch * w
                 qt_img = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
                 self.frame_ready.emit(qt_img)
+
+                # 5. Relay to Brain Dashboard 🛰️🎥 (Low-bandwidth: throttled to ~25fps, 480p, quality 20)
+                if self.brain_client and self.brain_client.connected:
+                    now = time.time()
+                    if now - getattr(self, '_last_relay_ts', 0) >= 0.04:  # ~25fps cap
+                        self._last_relay_ts = now
+                        try:
+                            import base64
+                            # Downscale to max 480px wide for network relay
+                            rh, rw = annotated_frame.shape[:2]
+                            if rw > 480:
+                                scale = 480.0 / rw
+                                relay_frame = cv2.resize(annotated_frame, (480, int(rh * scale)), interpolation=cv2.INTER_LINEAR)
+                            else:
+                                relay_frame = annotated_frame
+                            _, buffer = cv2.imencode('.jpg', relay_frame, [cv2.IMWRITE_JPEG_QUALITY, 20])
+                            frame_data = base64.b64encode(buffer).decode('utf-8')
+                            self.brain_client.sio.emit("video:frame", {
+                                "station_id": self.brain_client.station_name,
+                                "frame": frame_data
+                            })
+                        except Exception as e:
+                            print(f"VideoThread Relay Error: {e}")
 
             except Exception as e:
                 print(f"VideoThread runtime error: {e}")

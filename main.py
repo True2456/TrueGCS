@@ -485,7 +485,8 @@ def main():
                 # Default to UDP Stream
                 src = f"udp://{host or '0.0.0.0'}:{vport or '5008'}"
             
-            window.video_thread = VideoThread(stream_url=src)
+            brain_client = window.fleet_observer.brain if hasattr(window, "fleet_observer") else None
+            window.video_thread = VideoThread(stream_url=src, brain_client=brain_client)
             window.video_thread.gst_path = find_gstreamer()
             window.tab_ops.video_label.video_thread = window.video_thread
             window.video_thread.frame_ready.connect(window.update_video_frame)
@@ -511,6 +512,13 @@ def main():
             window.video_thread.set_tracking_mode(window.tab_ops.combo_tracking_mode.currentData())
             window.mount_tracker.set_enabled(window.tab_ops.chk_tracking.isChecked() and window.tab_ops.combo_tracking_mode.currentData() != "none")
             window.tab_ops.btn_vid_toggle.setText("Stop Video")
+            # Notify Brain: video stream is now active 🛰️
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
+                window.fleet_observer.brain.sio.emit("video:status", {
+                    "station_id": window.fleet_observer.brain.station_name,
+                    "active": True,
+                    "source": src
+                })
         else:
             if window.video_thread:
                 window.video_thread.stop()
@@ -520,6 +528,13 @@ def main():
             window.mount_tracker.set_enabled(False)
             window.tab_ops.btn_vid_toggle.setText("Start Video")
             window.tab_ops.video_label.clear()
+            # Notify Brain: video stream is now inactive 🛰️
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
+                window.fleet_observer.brain.sio.emit("video:status", {
+                    "station_id": window.fleet_observer.brain.station_name,
+                    "active": False,
+                    "source": None
+                })
 
     def on_tracking_error(err_x, err_y):
         if not window.video_thread:
@@ -763,7 +778,19 @@ def main():
     # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()
     orig_close = window.closeEvent
-    window.closeEvent = lambda e: [n.stop() for n in window.telemetry_nodes.values()] or orig_close(e)
+    def _on_close(event):
+        # Notify Brain this station is going offline 🛰️
+        try:
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
+                window.fleet_observer.brain.sio.emit(
+                    "station:remove", window.fleet_observer.brain.station_name
+                )
+        except Exception:
+            pass
+        for n in window.telemetry_nodes.values():
+            n.stop()
+        orig_close(event)
+    window.closeEvent = _on_close
 
     window.show()
     sys.exit(app.exec())

@@ -369,7 +369,7 @@ class TelemetryThread(QThread):
                         0, # Confirmation
                         mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, # Param1
                         custom_id, # Param2
-                        0, 0, 0
+                        0, 0, 0, 0, 0 # Param3-7
                     )
                 else:
                     self.master.set_mode(mode_name)
@@ -379,6 +379,10 @@ class TelemetryThread(QThread):
     def send_takeoff(self, target_sysid, alt=50.0):
         """Sends MAV_CMD_NAV_TAKEOFF to the drone."""
         if not self.master: return
+        
+        # Implicitly arm since Brain UI ARM button was removed
+        self.arm(target_sysid, True)
+        
         with self.lock:
             self.master.target_system = target_sysid
             self.master.mav.command_long_send(
@@ -391,6 +395,10 @@ class TelemetryThread(QThread):
     def start_mission(self, target_sysid):
         """Switches drone to AUTO mode to begin mission."""
         if not self.master: return
+        
+        # Implicitly arm since Brain UI ARM button was removed
+        self.arm(target_sysid, True)
+        
         with self.lock:
             self.master.target_system = target_sysid
             # Force ArduPilot Plane AUTO mode (10) via explicit MAV_CMD_DO_SET_MODE 🛰️
