@@ -127,7 +127,12 @@ def main():
                 nid = data["node_id"]
                 sid = data["sysid"]
                 name = window.combo_target_drone.itemText(i)
-                dList.append({"id": f"{nid}:{sid}", "name": name})
+                
+                color = "#00ddff"
+                node = window.telemetry_nodes.get(nid)
+                if node: color = node.color
+                    
+                dList.append({"id": f"{nid}:{sid}", "name": name, "color": color})
         window.tab_ops.map_widget.update_drone_list(dList)
 
     def r_drone_discovered(node_id, sysid, color):
@@ -397,8 +402,7 @@ def main():
         try:
             wps = json.loads(wp_json)
             if ":" not in target_id: return
-            nid, sid = target_id.split(":", 1)
-            sid = int(sid)
+            nid, sid = map(int, target_id.split(":"))
             
             if nid in window.telemetry_nodes:
                 window.telemetry_nodes[nid].upload_mission(sid, wps)
@@ -412,7 +416,11 @@ def main():
         try:
             nid, sid = map(int, target_id.split(":"))
             if nid in window.telemetry_nodes:
-                window.telemetry_nodes[nid].send_takeoff(sid, alt=50.0)
+                tel = window.telemetry_nodes[nid]
+                print(f"Mission: Executing AUTO-ARM and TAKEOFF for Drone {sid}")
+                tel.arm(sid, True)
+                time.sleep(0.1)
+                tel.send_takeoff(sid, alt=50.0)
                 window.lbl_status.setText(f"Mission: Initiating Takeoff (50m) for Drone {sid}...")
                 window.lbl_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
         except Exception as e:
@@ -451,6 +459,50 @@ def main():
     window.tab_ops.map_widget.mission_upload_requested.connect(handle_mission_upload_request)
     window.tab_ops.map_widget.takeoff_requested.connect(handle_takeoff_request)
     window.tab_ops.map_widget.start_mission_requested.connect(handle_start_mission_request)
+
+    # ---- FLEET-WIDE MISSION COMMANDS ----
+    def handle_fleet_deploy(deploy_json):
+        """Deploy missions to multiple drones in one action."""
+        try:
+            missions = json.loads(deploy_json)
+            count = 0
+            for m in missions:
+                target_id = m.get('target_id', '')
+                wps = m.get('waypoints', [])
+                if target_id and wps:
+                    handle_mission_upload_request(target_id, json.dumps(wps))
+                    count += 1
+            window.lbl_status.setText(f"Fleet Deploy: {count} missions uploaded")
+            window.lbl_status.setStyleSheet("color: #00ddff; font-weight: bold;")
+            print(f"Fleet Deploy: Sent {count} missions to fleet", flush=True)
+        except Exception as e:
+            print(f"Fleet Deploy Error: {e}", flush=True)
+
+    def handle_fleet_takeoff(targets_json):
+        """Send takeoff to all selected drones."""
+        try:
+            target_ids = json.loads(targets_json)
+            for tid in target_ids:
+                handle_takeoff_request(tid)
+            window.lbl_status.setText(f"Fleet Takeoff: {len(target_ids)} drones")
+            window.lbl_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
+        except Exception as e:
+            print(f"Fleet Takeoff Error: {e}", flush=True)
+
+    def handle_fleet_auto(targets_json):
+        """Start mission for all selected drones."""
+        try:
+            target_ids = json.loads(targets_json)
+            for tid in target_ids:
+                handle_start_mission_request(tid)
+            window.lbl_status.setText(f"Fleet AUTO: {len(target_ids)} drones")
+            window.lbl_status.setStyleSheet("color: #00ff00; font-weight: bold;")
+        except Exception as e:
+            print(f"Fleet Auto Error: {e}", flush=True)
+
+    window.tab_ops.map_widget.fleet_deploy_requested.connect(handle_fleet_deploy)
+    window.tab_ops.map_widget.fleet_takeoff_requested.connect(handle_fleet_takeoff)
+    window.tab_ops.map_widget.fleet_auto_requested.connect(handle_fleet_auto)
 
     
     window.tab_cfg.write_param_requested.connect(lambda p, v: window.telemetry_nodes[get_active_target()[0]].set_parameter(get_active_target()[1], p, v) if get_active_target()[0] is not None else None)
@@ -888,9 +940,10 @@ def main():
     window.btn_arm.clicked.connect(on_arm_clicked)
     window.tab_ops.map_widget.drone_context_menu_requested.connect(on_drone_context_menu)
     
-    window.tab_ops.map_widget.takeoff_requested.connect(on_takeoff)
-    window.tab_ops.map_widget.start_mission_requested.connect(on_start_mission)
-    window.tab_ops.map_widget.mission_upload_requested.connect(on_mission_upload)
+    # Duplicate bindings commented out to prevent double-execution:
+    # window.tab_ops.map_widget.takeoff_requested.connect(on_takeoff)
+    # window.tab_ops.map_widget.start_mission_requested.connect(on_start_mission)
+    # window.tab_ops.map_widget.mission_upload_requested.connect(on_mission_upload)
     
     # Camera Footprint toggle from map context menu
     window.tab_ops.map_widget.footprint_toggle_requested.connect(on_footprint_toggle_from_map)

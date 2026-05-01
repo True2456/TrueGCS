@@ -34,7 +34,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 
   /* Slide-out Mission Panel */
   #mission-panel {{
-    position: absolute; top: 10px; right: -320px; bottom: 10px; width: 300px;
+    position: absolute; top: 10px; right: -340px; bottom: 10px; width: 320px;
     background: rgba(9, 21, 28, 0.96); border: 1px solid rgba(0, 221, 255, 0.35);
     z-index: 6000; border-radius: 10px; display: flex; flex-direction: column;
     box-shadow: -10px 0 30px rgba(0,0,0,0.85); transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -47,6 +47,40 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     color: #00ddff; font-weight: bold; font-size: 13px; letter-spacing: 1px; display: flex; justify-content: space-between; align-items: center;
   }}
   
+  .section-label {{
+    font-size: 9px; color: #00ddff; font-weight: bold; letter-spacing: 1px; opacity: 0.7;
+    margin-bottom: 6px; text-transform: uppercase;
+  }}
+  .section-divider {{
+    border: none; border-top: 1px solid rgba(0, 221, 255, 0.15); margin: 8px 0;
+  }}
+
+  /* Fleet Selector */
+  #fleet-selector {{
+    padding: 8px; border-bottom: 1px solid rgba(0, 221, 255, 0.15);
+    max-height: 130px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #00ddff #09151c;
+  }}
+  #fleet-selector::-webkit-scrollbar {{ width: 4px; }}
+  #fleet-selector::-webkit-scrollbar-thumb {{ background: #00ddff; }}
+  .fleet-drone-row {{
+    display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+    border-radius: 4px; transition: background 0.15s; cursor: pointer;
+  }}
+  .fleet-drone-row:hover {{ background: rgba(0, 221, 255, 0.06); }}
+  .fleet-drone-row input[type="checkbox"] {{ accent-color: var(--drone-color, #00ddff); width: 14px; height: 14px; cursor: pointer; }}
+  .fleet-drone-row .drone-color-dot {{
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }}
+  .fleet-drone-row .drone-name {{ color: #ccc; font-size: 11px; font-weight: 600; flex: 1; }}
+  .fleet-sel-actions {{ display: flex; gap: 6px; padding: 4px 8px; }}
+  .fleet-sel-actions button {{
+    flex: 1; padding: 3px; font-size: 9px; cursor: pointer; border-radius: 2px;
+    background: transparent; border: 1px solid rgba(146, 176, 195, 0.3); color: #92b0c3;
+    text-transform: uppercase; font-weight: bold; transition: all 0.2s;
+  }}
+  .fleet-sel-actions button:hover {{ border-color: #00ddff; color: #00ddff; }}
+
+  /* Waypoint List */
   #mission-list {{
     flex: 1; overflow-y: auto; padding: 8px; scrollbar-width: thin; scrollbar-color: #00ddff #09151c;
   }}
@@ -77,40 +111,43 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   }}
   .btn-del-wp:hover {{ background: #ff3232; color: #fff; }}
 
-  /* Custom Tactical Selector (Fixes "White Box" Glitch) */
-  .drone-sel-row {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; position: relative; }}
-  #custom-target-select {{
-    flex: 1; background: #060c11; border: 1px solid rgba(0, 221, 255, 0.4);
-    color: #fff; font-size: 11px; padding: 5px 8px; border-radius: 2px; cursor: pointer;
-    user-select: none; transition: border-color 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Mission Mode Selector */
+  .mode-selector {{ display: flex; gap: 4px; margin-bottom: 6px; }}
+  .mode-btn {{
+    flex: 1; padding: 6px 4px; font-size: 9px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.5px; cursor: pointer; border-radius: 3px; transition: all 0.2s;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(146, 176, 195, 0.2); color: #92b0c3;
+    text-align: center;
   }}
-  #custom-target-select:after {{ content: ' ▼'; float: right; font-size: 8px; opacity: 0.6; }}
-  #custom-target-select:hover {{ border-color: #00ddff; }}
+  .mode-btn:hover {{ border-color: rgba(0, 221, 255, 0.5); color: #00ddff; }}
+  .mode-btn.active {{ background: rgba(0, 221, 255, 0.15); border-color: #00ddff; color: #00ddff; }}
 
-  #drone-options-popup {{
-    position: absolute; top: 100%; left: 0; right: 0; background: #09151c;
-    border: 1px solid #00ddff; border-top: none; z-index: 3000; display: none;
-    max-height: 150px; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.9);
+  /* Formation Options */
+  #formation-options {{
+    display: none; padding: 6px 0; gap: 6px;
   }}
-  .drone-opt {{ padding: 8px 10px; border-bottom: 1px solid rgba(0, 221, 255, 0.1); cursor: pointer; font-size: 10px; color: #92b0c3; }}
-  .drone-opt:hover {{ background: rgba(0, 221, 255, 0.2); color: #00ddff; }}
-  .drone-opt.selected {{ background: rgba(0, 221, 255, 0.15); color: #fff; }}
+  #formation-options.visible {{ display: flex; flex-direction: column; gap: 6px; }}
+  .formation-row {{ display: flex; gap: 6px; align-items: center; }}
+  .formation-row label {{ font-size: 9px; color: #92b0c3; white-space: nowrap; min-width: 30px; }}
+  .formation-row select, .formation-row input {{ flex: 1; }}
 
-  .panel-footer {{ padding: 10px; border-top: 1px solid rgba(0, 221, 255, 0.2); display: flex; gap: 8px; flex-direction: column; }}
+  .panel-footer {{ padding: 10px; border-top: 1px solid rgba(0, 221, 255, 0.2); display: flex; gap: 6px; flex-direction: column; }}
   .btn-mission {{
     flex: 1; padding: 8px; cursor: pointer; font-size: 11px; font-weight: bold;
     text-transform: uppercase; border-radius: 3px; transition: all 0.2s;
   }}
-  .btn-upload {{ background: #00ddff; color: #09151c; border: none; }}
-  .btn-upload:hover {{ background: #00b8d4; transform: translateY(-1px); }}
+  .btn-deploy {{ background: linear-gradient(135deg, #00ddff 0%, #00b8d4 100%); color: #09151c; border: none; font-size: 12px; letter-spacing: 1px; }}
+  .btn-deploy:hover {{ filter: brightness(1.15); transform: translateY(-1px); }}
   .btn-clear {{ background: transparent; border: 1px solid rgba(146, 176, 195, 0.4); color: #92b0c3; }}
   .btn-clear:hover {{ border-color: #fff; color: #fff; }}
-  
-  .btn-takeoff {{ background: #ffaa00; color: #000; border: none; margin-bottom: 5px; }}
-  .btn-takeoff:hover {{ background: #e69900; transform: translateY(-1px); }}
-  
-  .btn-start {{ background: #00ff00; color: #000; border: none; }}
-  .btn-start:hover {{ background: #00cc00; transform: translateY(-1px); }}
+  .btn-fleet-cmd {{
+    flex: 1; padding: 6px; cursor: pointer; font-size: 10px; font-weight: bold;
+    text-transform: uppercase; border-radius: 3px; transition: all 0.2s;
+  }}
+  .btn-takeoff-all {{ background: #ffaa00; color: #000; border: none; }}
+  .btn-takeoff-all:hover {{ background: #e69900; transform: translateY(-1px); }}
+  .btn-auto-all {{ background: #00ff00; color: #000; border: none; }}
+  .btn-auto-all:hover {{ background: #00cc00; transform: translateY(-1px); }}
 
   /* Map Controls Styling */
   .leaflet-control-zoom a {{
@@ -164,21 +201,60 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 <div id="mission-panel">
   <div class="panel-header" onclick="toggleMissionMode()" style="cursor: pointer;">
      <span>TACTICAL MISSION</span>
-     <span style="font-size: 8px; opacity: 0.5;">v1.0</span>
+     <span style="font-size: 8px; opacity: 0.5;">v2.0</span>
   </div>
+
+  <!-- Fleet Selector -->
+  <div style="padding: 8px 8px 0 8px;">
+    <div class="section-label">FLEET SELECTOR</div>
+  </div>
+  <div id="fleet-selector">
+    <div style="color: #92b0c3; font-size: 10px; padding: 8px;">No drones connected</div>
+  </div>
+  <div class="fleet-sel-actions">
+    <button onclick="selectAllDrones()">Select All</button>
+    <button onclick="deselectAllDrones()">Deselect All</button>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- Waypoint List -->
+  <div style="padding: 0 8px;"><div class="section-label">WAYPOINTS <span id="wp-count" style="color:#fff;">0</span></div></div>
   <div id="mission-list"></div>
+
+  <!-- Mission Mode & Footer -->
   <div class="panel-footer">
-    <div style="display: flex; flex-direction: column; gap: 5px; margin-bottom: 5px;">
-        <label style="font-size: 9px; color: #00ddff; font-weight: bold; opacity: 0.8;">SELECTED TARGET:</label>
-        <div id="custom-target-display" style="color: #fff; font-size: 11px; padding: 5px 0; font-weight: bold;">-- NO TARGET --</div>
+    <div class="section-label">MISSION MODE</div>
+    <div class="mode-selector">
+      <div class="mode-btn active" data-mode="assign_all" onclick="setMissionMode('assign_all')">Assign All</div>
+      <div class="mode-btn" data-mode="split_route" onclick="setMissionMode('split_route')">Split Route</div>
+      <div class="mode-btn" data-mode="formation" onclick="setMissionMode('formation')">Formation</div>
     </div>
-    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+
+    <div id="formation-options">
+      <div class="formation-row">
+        <label>Type</label>
+        <select id="formation-type" onchange="onFormationChanged()">
+          <option value="line_abreast">Line Abreast</option>
+          <option value="v_formation">V-Formation</option>
+          <option value="trail">Trail</option>
+          <option value="diamond">Diamond</option>
+        </select>
+      </div>
+      <div class="formation-row">
+        <label>Gap</label>
+        <input type="number" id="formation-gap" value="50" min="5" max="500" step="5" onchange="onFormationChanged()">
+        <span style="font-size:9px; color:#92b0c3;">m</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 8px;">
         <button class="btn-mission btn-clear" onclick="clearMission()">CLEAR</button>
-        <button class="btn-mission btn-upload" onclick="uploadMission()">UPLOAD</button>
+        <button class="btn-mission btn-deploy" onclick="deployMission()">DEPLOY MISSION</button>
     </div>
-    <div style="display: flex; flex-direction: column; gap: 6px;">
-        <button class="btn-mission btn-takeoff" onclick="takeoff()">TAKEOFF (50m)</button>
-        <button class="btn-mission btn-start" onclick="startMission()">START MISSION (AUTO)</button>
+    <div style="display: flex; gap: 6px;">
+        <button class="btn-fleet-cmd btn-takeoff-all" onclick="takeoffAll()">TAKEOFF ALL</button>
+        <button class="btn-fleet-cmd btn-auto-all" onclick="autoAll()">AUTO ALL</button>
     </div>
   </div>
 </div>
@@ -205,6 +281,10 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   var missionWaypoints = [];
   var missionMarkers = [];
   var missionPolyline = L.polyline([], {{ color: '#00ddff', weight: 2, opacity: 0.8 }}).addTo(map);
+  var missionMode = 'assign_all'; // 'assign_all', 'split_route', 'formation'
+  var previewLines = []; // Formation preview polylines
+  var knownFleetDrones = []; // [{{id, name, color}}]
+  var selectedDroneId = "none"; // Legacy compat
 
   // =========================================================================
   // CAMERA FOOTPRINT OVERLAY SYSTEM
@@ -545,6 +625,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
       btn.style.color = "#00ddff";
       pnl.classList.remove('open');
       isMissionMode = false;
+      clearPreviewLines();
     }}
   }}
 
@@ -572,24 +653,28 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
         wpRef.lon = e.target.getLatLng().lng;
         renderMissionList();
         updatePolyline();
+        updatePreview();
       }}
     }});
     
     missionMarkers.push(m);
     renderMissionList();
     updatePolyline();
+    updatePreview();
   }}
 
   function renderMissionList() {{
     var list = document.getElementById('mission-list');
     list.innerHTML = '';
+    var countEl = document.getElementById('wp-count');
+    if (countEl) countEl.textContent = missionWaypoints.length;
     
     missionWaypoints.forEach((wp, index) => {{
       var item = document.createElement('div');
       item.className = 'wp-item';
       item.innerHTML = `
         <div class="wp-header">
-          <span>WAYPOINT ${{index + 1}}</span>
+          <span>WP ${{index + 1}}</span>
           <button class="btn-del-wp" onclick="removeWaypoint(${{wp.id}})">X</button>
         </div>
         <div class="wp-row">
@@ -609,7 +694,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 
   function updateWpVal(id, key, val) {{
     var wp = missionWaypoints.find(w => w.id === id);
-    if (wp) wp[key] = parseFloat(val);
+    if (wp) {{ wp[key] = parseFloat(val); updatePreview(); }}
   }}
 
   function removeWaypoint(id) {{
@@ -619,13 +704,13 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
       map.removeLayer(missionMarkers[markerIdx]);
       missionMarkers.splice(markerIdx, 1);
     }}
-    // Renumber remaining
     missionMarkers.forEach((m, i) => {{
        var iconHtml = `<div style="background: #00ddff; color: #000; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 1.5px solid #fff; font-size: 11px;">${{i+1}}</div>`;
        m.setIcon(L.divIcon({{ html: iconHtml, iconSize: [22,22], iconAnchor: [11,11], className: '' }}));
     }});
     renderMissionList();
     updatePolyline();
+    updatePreview();
   }}
 
   function clearMission() {{
@@ -634,6 +719,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     missionMarkers = [];
     updatePolyline();
     renderMissionList();
+    clearPreviewLines();
   }}
 
   function updatePolyline() {{
@@ -641,74 +727,299 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     missionPolyline.setLatLngs(pts);
   }}
 
-  var selectedDroneId = "none";
-  function toggleTargetPopup() {{
-    var popup = document.getElementById('drone-options-popup');
-    popup.style.display = (popup.style.display === 'block') ? 'none' : 'block';
-  }}
+  // =========================================================================
+  // FLEET SELECTOR
+  // =========================================================================
 
-  function selectDroneOption(id, name) {{
-    selectedDroneId = id;
-    document.getElementById('custom-target-select').textContent = name;
-    document.getElementById('drone-options-popup').style.display = 'none';
-    
-    // Update highlight
-    var opts = document.querySelectorAll('.drone-opt');
-    opts.forEach(o => o.classList.remove('selected'));
-    // (Logic for marking as selected would go here)
-  }}
-
-  function uploadMission() {{
-    if (missionWaypoints.length === 0 || selectedDroneId === "none") {{
-        alert("Please select target drone and mission points.");
-        return;
-    }}
-    if (bridge) {{
-      bridge.on_mission_upload_request(selectedDroneId, JSON.stringify(missionWaypoints));
-    }}
-  }}
-
-  function takeoff() {{
-    if (selectedDroneId === "none") {{
-        alert("Please select target drone.");
-        return;
-    }}
-    if (bridge) bridge.on_takeoff_request(selectedDroneId);
-  }}
-
-  function startMission() {{
-    if (selectedDroneId === "none") {{
-        alert("Please select target drone.");
-        return;
-    }}
-    if (bridge) bridge.on_start_mission_request(selectedDroneId);
-  }}
-
-  function setActiveDrone(id, name) {{
-    selectedDroneId = id;
-    var display = document.getElementById('custom-target-display');
-    if (display) display.textContent = name;
-    console.log("Map: Active Target Synced -> " + name + " (" + id + ")");
-  }}
-
-  function setAvailableDrones(dronesJson) {{
+  function updateFleetSelector(dronesJson) {{
     var drones = JSON.parse(dronesJson);
-    var popup = document.getElementById('drone-options-popup');
-    popup.innerHTML = '';
+    knownFleetDrones = drones;
+    var container = document.getElementById('fleet-selector');
+    if (!container) return;
     
     if (drones.length === 0) {{
-        popup.innerHTML = '<div class="drone-opt">-- NO DRONES FOUND --</div>';
-        return;
+      container.innerHTML = '<div style="color: #92b0c3; font-size: 10px; padding: 8px;">No drones connected</div>';
+      return;
     }}
-
+    
+    // Preserve checked state
+    var prevChecked = {{}};
+    container.querySelectorAll('input[type=checkbox]').forEach(cb => {{
+      prevChecked[cb.value] = cb.checked;
+    }});
+    
+    container.innerHTML = '';
     drones.forEach(d => {{
-      var opt = document.createElement('div');
-      opt.className = 'drone-opt';
-      opt.textContent = d.name;
-      opt.onclick = function() {{ selectDroneOption(d.id, d.name); }};
-      popup.appendChild(opt);
+      var row = document.createElement('div');
+      row.className = 'fleet-drone-row';
+      var isChecked = prevChecked[d.id] !== undefined ? prevChecked[d.id] : true;
+      row.innerHTML = `
+        <input type="checkbox" value="${{d.id}}" ${{isChecked ? 'checked' : ''}} style="--drone-color: ${{d.color || '#00ddff'}};" onchange="updatePreview()">
+        <div class="drone-color-dot" style="background: ${{d.color || '#00ddff'}};"></div>
+        <span class="drone-name">${{d.name}}</span>
+      `;
+      // Clicking the row toggles the checkbox
+      row.addEventListener('click', function(e) {{
+        if (e.target.tagName !== 'INPUT') {{
+          var cb = row.querySelector('input');
+          cb.checked = !cb.checked;
+          updatePreview();
+        }}
+      }});
+      container.appendChild(row);
     }});
   }}
+
+  // Alias for backward compat
+  function setAvailableDrones(dronesJson) {{ updateFleetSelector(dronesJson); }}
+  function setActiveDrone(id, name) {{ selectedDroneId = id; }}
+
+  function getSelectedDrones() {{
+    var selected = [];
+    var checkboxes = document.querySelectorAll('#fleet-selector input[type=checkbox]:checked');
+    checkboxes.forEach(cb => {{
+      var drone = knownFleetDrones.find(d => d.id === cb.value);
+      if (drone) selected.push(drone);
+    }});
+    return selected;
+  }}
+
+  function selectAllDrones() {{
+    document.querySelectorAll('#fleet-selector input[type=checkbox]').forEach(cb => {{ cb.checked = true; }});
+    updatePreview();
+  }}
+
+  function deselectAllDrones() {{
+    document.querySelectorAll('#fleet-selector input[type=checkbox]').forEach(cb => {{ cb.checked = false; }});
+    clearPreviewLines();
+  }}
+
+  // =========================================================================
+  // MISSION MODE
+  // =========================================================================
+
+  function setMissionMode(mode) {{
+    missionMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(btn => {{
+      btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
+    }});
+    var formOpts = document.getElementById('formation-options');
+    if (formOpts) {{
+      if (mode === 'formation') {{
+        formOpts.classList.add('visible');
+      }} else {{
+        formOpts.classList.remove('visible');
+      }}
+    }}
+    updatePreview();
+  }}
+
+  function onFormationChanged() {{ updatePreview(); }}
+
+  // =========================================================================
+  // FORMATION OFFSET CALCULATOR
+  // =========================================================================
+
+  var R_EARTH = 6378137.0;
+
+  function offsetLatLon(lat, lon, northM, eastM) {{
+    var dLat = northM / R_EARTH;
+    var dLon = eastM / (R_EARTH * Math.cos(lat * Math.PI / 180));
+    return [lat + dLat * (180 / Math.PI), lon + dLon * (180 / Math.PI)];
+  }}
+
+  function bearingBetween(lat1, lon1, lat2, lon2) {{
+    var dLon = (lon2 - lon1) * Math.PI / 180;
+    var y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+    var x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180)
+          - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+    return Math.atan2(y, x);
+  }}
+
+  function calculateFormationWaypoints(baseWps, droneIndex, totalDrones, formType, gapM) {{
+    if (totalDrones <= 1 || baseWps.length === 0) return baseWps;
+
+    var offsetWps = [];
+    for (var i = 0; i < baseWps.length; i++) {{
+      var wp = baseWps[i];
+      // Determine heading at this waypoint
+      var heading;
+      if (i < baseWps.length - 1) {{
+        heading = bearingBetween(wp.lat, wp.lon, baseWps[i+1].lat, baseWps[i+1].lon);
+      }} else if (i > 0) {{
+        heading = bearingBetween(baseWps[i-1].lat, baseWps[i-1].lon, wp.lat, wp.lon);
+      }} else {{
+        heading = 0;
+      }}
+
+      // Perpendicular (right = heading + 90deg)
+      var perpR = heading + Math.PI / 2;
+      var perpN = Math.cos(perpR);
+      var perpE = Math.sin(perpR);
+      // Along track (behind = heading + 180deg)
+      var backN = -Math.cos(heading);
+      var backE = -Math.sin(heading);
+
+      var lateralOff = 0; // metres right (positive) or left (negative)
+      var longitudinalOff = 0; // metres behind (positive)
+
+      // Center index: drone 0 is lead
+      var centerIdx = (totalDrones - 1) / 2.0;
+      var relIdx = droneIndex - centerIdx; // negative = left, positive = right
+
+      if (formType === 'line_abreast') {{
+        lateralOff = relIdx * gapM;
+      }} else if (formType === 'v_formation') {{
+        // Lead drone (index 0) at center front; others spread back and out
+        if (droneIndex === 0) {{
+          lateralOff = 0;
+          longitudinalOff = 0;
+        }} else {{
+          var side = (droneIndex % 2 === 1) ? 1 : -1; // odd right, even left
+          var rank = Math.ceil(droneIndex / 2);
+          lateralOff = side * rank * gapM;
+          longitudinalOff = rank * gapM;
+        }}
+      }} else if (formType === 'trail') {{
+        lateralOff = 0;
+        longitudinalOff = droneIndex * gapM;
+      }} else if (formType === 'diamond') {{
+        // Diamond: 0=lead, 1=right, 2=left, 3=trail, then repeat pattern
+        var pos = droneIndex % 4;
+        var ring = Math.floor(droneIndex / 4) + 1;
+        if (droneIndex === 0) {{
+          lateralOff = 0; longitudinalOff = 0;
+        }} else if (pos === 1) {{
+          lateralOff = ring * gapM; longitudinalOff = ring * gapM * 0.5;
+        }} else if (pos === 2) {{
+          lateralOff = -ring * gapM; longitudinalOff = ring * gapM * 0.5;
+        }} else if (pos === 3) {{
+          lateralOff = 0; longitudinalOff = ring * gapM;
+        }} else {{
+          lateralOff = relIdx * gapM; longitudinalOff = ring * gapM;
+        }}
+      }}
+
+      var newPos = offsetLatLon(
+        wp.lat, wp.lon,
+        lateralOff * perpN + longitudinalOff * backN,
+        lateralOff * perpE + longitudinalOff * backE
+      );
+
+      offsetWps.push({{ id: wp.id, lat: newPos[0], lon: newPos[1], alt: wp.alt, speed: wp.speed }});
+    }}
+    return offsetWps;
+  }}
+
+  // =========================================================================
+  // VISUAL PREVIEW
+  // =========================================================================
+
+  function clearPreviewLines() {{
+    previewLines.forEach(pl => map.removeLayer(pl));
+    previewLines = [];
+  }}
+
+  function updatePreview() {{
+    clearPreviewLines();
+    if (missionWaypoints.length < 2) return;
+    
+    var drones = getSelectedDrones();
+    if (drones.length === 0) return;
+
+    if (missionMode === 'assign_all') {{
+      // All drones get same path — show one line per drone in their color
+      drones.forEach(d => {{
+        var pts = missionWaypoints.map(w => [w.lat, w.lon]);
+        var line = L.polyline(pts, {{ color: d.color || '#00ddff', weight: 2, opacity: 0.4, dashArray: '6 4' }}).addTo(map);
+        previewLines.push(line);
+      }});
+    }} else if (missionMode === 'split_route') {{
+      var n = drones.length;
+      var chunkSize = Math.ceil(missionWaypoints.length / n);
+      drones.forEach((d, idx) => {{
+        var start = idx * chunkSize;
+        var end = Math.min(start + chunkSize, missionWaypoints.length);
+        // Include overlap point for visual continuity
+        var chunk = missionWaypoints.slice(Math.max(0, start), end);
+        if (chunk.length > 0) {{
+          var pts = chunk.map(w => [w.lat, w.lon]);
+          var line = L.polyline(pts, {{ color: d.color || '#00ddff', weight: 3, opacity: 0.6, dashArray: '6 4' }}).addTo(map);
+          previewLines.push(line);
+        }}
+      }});
+    }} else if (missionMode === 'formation') {{
+      var formType = document.getElementById('formation-type').value;
+      var gapM = parseFloat(document.getElementById('formation-gap').value) || 50;
+      drones.forEach((d, idx) => {{
+        var offsetWps = calculateFormationWaypoints(missionWaypoints, idx, drones.length, formType, gapM);
+        var pts = offsetWps.map(w => [w.lat, w.lon]);
+        var line = L.polyline(pts, {{ color: d.color || '#00ddff', weight: 3, opacity: 0.5, dashArray: '6 4' }}).addTo(map);
+        previewLines.push(line);
+      }});
+    }}
+  }}
+
+  // =========================================================================
+  // FLEET DEPLOY & COMMANDS
+  // =========================================================================
+
+  function deployMission() {{
+    var drones = getSelectedDrones();
+    if (missionWaypoints.length === 0) {{ alert("No waypoints defined. Right-click the map to add waypoints."); return; }}
+    if (drones.length === 0) {{ alert("No drones selected. Check drones in the Fleet Selector."); return; }}
+    if (!bridge) {{ alert("Bridge not connected."); return; }}
+
+    var missions = [];
+
+    if (missionMode === 'assign_all') {{
+      drones.forEach(d => {{
+        missions.push({{ target_id: d.id, waypoints: missionWaypoints }});
+      }});
+    }} else if (missionMode === 'split_route') {{
+      var n = drones.length;
+      var chunkSize = Math.ceil(missionWaypoints.length / n);
+      drones.forEach((d, idx) => {{
+        var start = idx * chunkSize;
+        var end = Math.min(start + chunkSize, missionWaypoints.length);
+        var chunk = missionWaypoints.slice(start, end);
+        if (chunk.length > 0) {{
+          missions.push({{ target_id: d.id, waypoints: chunk }});
+        }}
+      }});
+    }} else if (missionMode === 'formation') {{
+      var formType = document.getElementById('formation-type').value;
+      var gapM = parseFloat(document.getElementById('formation-gap').value) || 50;
+      drones.forEach((d, idx) => {{
+        var offsetWps = calculateFormationWaypoints(missionWaypoints, idx, drones.length, formType, gapM);
+        missions.push({{ target_id: d.id, waypoints: offsetWps }});
+      }});
+    }}
+
+    bridge.on_fleet_deploy(JSON.stringify(missions));
+    clearPreviewLines();
+  }}
+
+  function takeoffAll() {{
+    var drones = getSelectedDrones();
+    if (drones.length === 0) {{ alert("No drones selected."); return; }}
+    if (!bridge) return;
+    var ids = drones.map(d => d.id);
+    bridge.on_fleet_takeoff(JSON.stringify(ids));
+  }}
+
+  function autoAll() {{
+    var drones = getSelectedDrones();
+    if (drones.length === 0) {{ alert("No drones selected."); return; }}
+    if (!bridge) return;
+    var ids = drones.map(d => d.id);
+    bridge.on_fleet_auto(JSON.stringify(ids));
+  }}
+
+  // Legacy compat stubs
+  function uploadMission() {{ deployMission(); }}
+  function takeoff() {{ takeoffAll(); }}
+  function startMission() {{ autoAll(); }}
 
   var trackerDrones = {{}};
   function updateDronePosition(node_id, sysid, lat, lon, heading, color_str) {{
@@ -761,6 +1072,9 @@ class MapBridge(QObject):
     drone_context_menu_requested = Signal(str) # target_id
     footprint_toggle_requested = Signal(str) # target_id
     footprint_state_changed = Signal(str, bool) # target_id, is_active
+    fleet_deploy_requested = Signal(str) # JSON: [{target_id, waypoints}, ...]
+    fleet_takeoff_requested = Signal(str) # JSON: [target_id, ...]
+    fleet_auto_requested = Signal(str) # JSON: [target_id, ...]
 
     @Slot(str)
     def on_drone_context_menu(self, target_id):
@@ -796,6 +1110,21 @@ class MapBridge(QObject):
     def on_start_mission_request(self, target_id):
         self.start_mission_requested.emit(target_id)
 
+    @Slot(str)
+    def on_fleet_deploy(self, deploy_json):
+        """Fleet-wide mission deploy from the mission planner."""
+        self.fleet_deploy_requested.emit(deploy_json)
+
+    @Slot(str)
+    def on_fleet_takeoff(self, targets_json):
+        """Fleet-wide takeoff command."""
+        self.fleet_takeoff_requested.emit(targets_json)
+
+    @Slot(str)
+    def on_fleet_auto(self, targets_json):
+        """Fleet-wide AUTO/start mission command."""
+        self.fleet_auto_requested.emit(targets_json)
+
 class SatelliteMapWidget(QWidget):
     waypoint_requested = Signal(float, float)
     mission_upload_requested = Signal(str, str)
@@ -804,6 +1133,9 @@ class SatelliteMapWidget(QWidget):
     drone_context_menu_requested = Signal(str)
     footprint_toggle_requested = Signal(str)  # target_id
     footprint_state_changed = Signal(str, bool)  # target_id, is_active
+    fleet_deploy_requested = Signal(str)  # JSON
+    fleet_takeoff_requested = Signal(str)  # JSON
+    fleet_auto_requested = Signal(str)  # JSON
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -816,6 +1148,9 @@ class SatelliteMapWidget(QWidget):
         self._bridge.start_mission_requested.connect(self.start_mission_requested.emit)
         self._bridge.drone_context_menu_requested.connect(self.drone_context_menu_requested.emit)
         self._bridge.footprint_toggle_requested.connect(self.footprint_toggle_requested.emit)
+        self._bridge.fleet_deploy_requested.connect(self.fleet_deploy_requested.emit)
+        self._bridge.fleet_takeoff_requested.connect(self.fleet_takeoff_requested.emit)
+        self._bridge.fleet_auto_requested.connect(self.fleet_auto_requested.emit)
         # Connect footprint state changes to update _active_fp_target tracking
         self._bridge.footprint_state_changed.connect(self._on_footprint_state_changed)
         # Track which drone footprint is active for video overlay routing
