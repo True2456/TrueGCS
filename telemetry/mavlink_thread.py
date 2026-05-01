@@ -22,7 +22,8 @@ class TelemetrySignals(QObject):
     gps2_updated = Signal(int, int, int, float) # node_id, sysid, fix_type, hdop
     ekf_status_updated = Signal(int, int, int) # node_id, sysid, flags
     nav_updated = Signal(int, int, float) # node_id, sysid, wp_dist
-
+    mount_angles_updated = Signal(int, int, float, float) # node_id, sysid, pitch_deg, yaw_deg
+    
 class TelemetryThread(QThread):
     def __init__(self, node_id, color, connection_string="COM18", baud=115200, parent=None):
         super().__init__(parent)
@@ -226,6 +227,8 @@ class TelemetryThread(QThread):
                         if mount_pitch is not None and mount_yaw is not None:
                             try:
                                 self.mount_angles[sysid] = (float(mount_pitch), float(mount_yaw))
+                                # Emit mount angles for footprint calculation 📍
+                                self.signals.mount_angles_updated.emit(self.node_id, sysid, float(mount_pitch), float(mount_yaw))
                             except Exception:
                                 # Ignore malformed values
                                 pass

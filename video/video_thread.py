@@ -187,12 +187,15 @@ class VideoThread(QThread):
     # Signals a QImage to be displayed in the UI
     frame_ready = Signal(QImage)
     # Signals the PID error (X, Y) to calculate gimbal adjustments
-    tracking_error = Signal(int, int) 
+    tracking_error = Signal(int, int)
     # Signals status info (status_text, offset_x, offset_y, confidence)
     target_status = Signal(str, int, int, float)
     source_frame_size = Signal(int, int)
     ai_ready = Signal(str, str) # Emitted when model is fully loaded and optimized 🚀
     ai_diag_updated = Signal(str, float, float) # (status/model, ingest_fps, inference_fps) 📈
+    
+    # Signals a base64-encoded JPEG frame for footprint video overlay
+    footprint_frame_ready = Signal(str, int, bytes) # target_id (nid:sid), quality(1-100), jpeg_bytes
     
     def __init__(self, stream_url="udp://@:5010", brain_client=None, parent=None):
         super().__init__(parent)
@@ -248,6 +251,13 @@ class VideoThread(QThread):
         # Temporal Sync Buffer (Zero-Lag 🚀)
         from collections import deque
         self.frame_history = deque(maxlen=30) # ~1s history at 30fps
+        
+        # Footprint video overlay control
+        self._footprint_enabled = False  # Set True when footprint has video enabled
+        
+    def set_footprint_enabled(self, enabled):
+        """Enable or disable footprint frame export."""
+        self._footprint_enabled = bool(enabled)
 
     def set_click_marker(self, x: int | None, y: int | None, ttl_s: float = 1.5) -> None:
         """Show a temporary cross at (x,y) in the *source frame* coordinates."""
@@ -906,6 +916,19 @@ class VideoThread(QThread):
                 bytes_per_line = ch * w
                 qt_img = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
                 self.frame_ready.emit(qt_img)
+
+                # 4.5. Export frame for footprint video overlay (throttled to ~5fps, quality 60)
+                if getattr(self, "_footprint_enabled", False):
+                    now = time.time()
+                    fp_interval = 0.2  # 5 fps for footprint overlay
+                    if now - getattr(self, '_last_fp_ts', 0) >= fp_interval:
+                        self._last_fp_ts = now
+                        try:
+                            # Compress to JPEG at 60% quality for footprint display
+                            _, fp_buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                            self.footprint_frame_ready.emit("main", 60, fp_buffer.tobytes())
+                        except Exception as e:
+                            print(f"VideoThread Footprint Export Error: {e}")
 
                 # 5. Relay to Brain Dashboard 🛰️🎥 (Low-bandwidth: throttled to ~25fps, 480p, quality 20)
                 if self.brain_client and self.brain_client.connected:

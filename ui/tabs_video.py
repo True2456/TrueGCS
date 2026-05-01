@@ -6,6 +6,7 @@ class VideoTab(QWidget):
     search_prompt_changed = Signal(str)
     labels_toggled = Signal(bool)
     box_color_changed = Signal(tuple)
+    footprint_toggled = Signal(bool)  # Camera footprint toggle
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -99,6 +100,13 @@ class VideoTab(QWidget):
         self.chk_show_labels.toggled.connect(lambda state: self.labels_toggled.emit(state))
         vid_grid.addWidget(self.chk_show_labels, 2, 0, 1, 2)
         
+        # Camera Footprint Toggle 📍
+        self.chk_footprint = QCheckBox("Show Camera Footprint on Map")
+        self.chk_footprint.setChecked(False)
+        self.chk_footprint.setStyleSheet("color: #00ddff; font-weight: bold;")
+        self.chk_footprint.toggled.connect(self._emit_footprint_toggle)
+        vid_grid.addWidget(self.chk_footprint, 3, 0, 1, 2)
+        
         vid_lay.addLayout(vid_grid)
         
         container_layout.addWidget(vid_box)
@@ -126,3 +134,7 @@ class VideoTab(QWidget):
     def _handle_color_change(self, index):
         color_bgr = self.combo_box_color.currentData()
         self.box_color_changed.emit(color_bgr)
+
+    def _emit_footprint_toggle(self, checked):
+        """Emit footprint toggle signal."""
+        self.footprint_toggled.emit(checked)

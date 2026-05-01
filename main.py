@@ -26,6 +26,7 @@ from telemetry.mavlink_thread import TelemetryThread
 from PySide6.QtCore import QTimer, QObject, Signal
 from gimbal.mount_tracker import MountTrackerController, MountTrackerConfig
 from core.fleet_brain_observer import FleetBrainObserver
+from core.camera_footprint_manager import CameraFootprintManager, CameraFootprintConfig
 
 class LogSignaler(QObject):
     log_ready = Signal(str)
@@ -83,6 +84,24 @@ def main():
     window.relay_process = None
     window.mount_tracker = MountTrackerController(MountTrackerConfig())
     
+    # ---- CAMERA FOOTPRINT MANAGER 📍 ----
+    # Create footprint manager with custom camera config (adjust FOV for your camera)
+    footprint_config = CameraFootprintConfig(
+        hfov_deg=60.0,   # Horizontal FOV (adjust for your camera)
+        vfov_deg=45.0,   # Vertical FOV (adjust for your camera)
+    )
+    window.footprint_manager = CameraFootprintManager(
+        window.tab_ops.map_widget,
+        config=footprint_config
+    )
+    # Connect footprint manager signals to map widget
+    window.footprint_manager.footprint_updated.connect(
+        window.tab_ops.map_widget.add_footprint
+    )
+    window.footprint_manager.footprint_cleared.connect(
+        window.tab_ops.map_widget.clear_footprint
+    )
+
     # ---- GLOBAL NODE MANAGER ----
     window.telemetry_nodes = {}
     window.fleet_observer = FleetBrainObserver(window)
@@ -193,10 +212,14 @@ def main():
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
             window.tab_ops.update_attitude(roll, pitch, yaw)
+        # Feed attitude to footprint manager 📍
+        window.footprint_manager.update_attitude(n_id, s_id, roll, pitch, yaw)
 
     def r_position_updated(n_id, s_id, lat, lon, alt):
         if lat is None or lon is None or not math.isfinite(lat) or not math.isfinite(lon) or abs(lat) > 90.0 or abs(lon) > 180.0:
             return
+        # Feed position to footprint manager 📍
+        window.footprint_manager.update_position(n_id, s_id, lat, lon, alt if alt is not None else 0.0)
         color = window.telemetry_nodes[n_id].color if n_id in window.telemetry_nodes else "#ffffff"
         heading = window.drone_headings.get(f"{n_id}:{s_id}", 0.0)
         window.tab_ops.map_widget.update_drone_position(n_id, s_id, lat, lon, heading, color)
@@ -272,6 +295,10 @@ def main():
         tel.signals.parameter_progress.connect(r_param_prog)
         tel.signals.modes_available.connect(r_modes_avail)
         tel.signals.armed_status_changed.connect(r_armed_status)
+        # Connect mount angles to footprint manager 📍
+        tel.signals.mount_angles_updated.connect(
+            lambda nid, sid, pitch, yaw: window.footprint_manager.update_mount_angles(nid, sid, pitch, yaw)
+        )
         if hasattr(window, 'fleet_observer'): window.fleet_observer.sync_node(tel)
 
     # ---- NODE MANAGEMENT ----
@@ -495,6 +522,10 @@ def main():
             window.video_thread.source_frame_size.connect(window.tab_ops.video_label.set_source_frame_size)
             window.video_thread.tracking_error.connect(on_tracking_error)
             window.video_thread.ai_ready.connect(on_ai_ready)
+            # Connect footprint frame signal to map widget for video overlay 📍🎥
+            window.video_thread.footprint_frame_ready.connect(
+                lambda nid, quality, jpeg_bytes: window.tab_ops.map_widget.update_footprint_video_bytes(nid, jpeg_bytes)
+            )
             # Apply any AI engine/model preset from Video tab at startup
             eng = window.tab_video.combo_ai_engine.currentText().split()[0]
             mdl = window.tab_video.model_combo.currentText().split()[0]
@@ -686,6 +717,25 @@ def main():
     window.tab_video.search_prompt_changed.connect(on_search_prompt_changed)
     window.tab_ops.class_filter_changed.connect(lambda ids: window.video_thread.set_active_classes(ids) if window.video_thread else None)
     
+    # ---- CAMERA FOOTPRINT TOGGLE 📍 ----
+    window.tab_video.footprint_toggled.connect(window.footprint_manager.set_enabled)
+    
+    # Connect footprint manager state changes to enable/disable video export in VideoThread
+    def on_footprint_global_toggled(enabled):
+        """Enable/disable footprint video export when global footprint toggle changes."""
+        if window.video_thread:
+            window.video_thread.set_footprint_enabled(enabled)
+    
+    # Also connect per-drone footprint state changes to enable/disable video export
+    def on_drone_footprint_state_changed(nid, sid, is_active):
+        """Enable/disable footprint video export for specific drone."""
+        if window.video_thread:
+            # Enable export if any drone has footprint active
+            window.video_thread.set_footprint_enabled(is_active)
+    
+    window.footprint_manager.enabled_changed.connect(on_footprint_global_toggled)
+    window.footprint_manager.footprint_state_changed.connect(on_drone_footprint_state_changed)
+
     # ---- MISSION PLANNER INTEGRATION ----
     # ---- FLIGHT MODE & CONTEXT MENU INTEGRATION ----
     
@@ -740,7 +790,74 @@ def main():
         disarm_action = menu.addAction("DISARM DRONE")
         disarm_action.triggered.connect(lambda: window.telemetry_nodes[nid].arm(sid, False) if nid in window.telemetry_nodes else None)
         
+        menu.addSeparator()
+        
+        # Camera Footprint Toggle
+        fp_action = menu.addAction("📷 TOGGLE CAMERA FOOTPRINT ON MAP")
+        fp_action.triggered.connect(lambda: window.tab_ops.map_widget.footprint_toggle_requested.emit(target_id))
+        
         menu.exec(QCursor.pos())
+
+    def on_footprint_toggle_from_map(target_id):
+        """Toggle footprint visibility for a specific drone from the map context menu."""
+        nid, sid = parse_target(target_id)
+        if nid is None or sid is None:
+            return
+        
+        map_widget = window.tab_ops.map_widget
+        
+        # Check current Python state to determine new state
+        was_active = window.footprint_manager.is_drone_footprint_active(nid, sid)
+        new_state = "ON" if not was_active else "OFF"
+        
+        print(f"[Python] on_footprint_toggle_from_map: target_id={target_id}, nid={nid}, sid={sid}, new_state={new_state}")
+        
+        # First, set JavaScript per-drone state BEFORE emitting Python signals
+        # This ensures updateFootprint() will render when called from telemetry signals
+        if map_widget and hasattr(map_widget, '_web_view'):
+            # Build JS string using concatenation to avoid f-string brace conflicts
+            is_active_js = "true" if new_state == "ON" else "false"
+            js = (
+                "// Set per-drone footprint state in JavaScript FIRST\n"
+                "var fpKey = '" + str(nid) + "_" + str(sid) + "';\n"
+                "activeFootprints[fpKey] = " + is_active_js + ";\n"
+                "console.log('[JS] Set activeFootprints[' + fpKey + '] = ' + activeFootprints[fpKey]);\n"
+                "\n"
+                "// Update button appearance\n"
+                "var fpBtn = document.getElementById('fp-btn-" + str(nid) + ":" + str(sid) + "');\n"
+                "if (fpBtn) {\n"
+                "    fpBtn.textContent = '📷 FOOTPRINT " + new_state + "';\n"
+                "    if ('" + new_state + "' === 'ON') {\n"
+                "        fpBtn.style.background = 'rgba(255,170,0,0.4)';\n"
+                "        fpBtn.style.borderColor = '#ffcc00';\n"
+                "    } else {\n"
+                "        fpBtn.style.background = 'rgba(255,170,0,0.2)';\n"
+                "        fpBtn.style.borderColor = '#ffaa00';\n"
+                "    }\n"
+                "}\n"
+                "\n"
+                "// Trigger footprint recalculation if enabling\n"
+                "if (activeFootprints[fpKey]) {\n"
+                "    console.log('[JS] Triggering footprint recalculation for ' + fpKey);\n"
+                "}\n"
+            )
+            map_widget._web_view.page().runJavaScript(js)
+            
+            # Track active footprint target for video overlay routing
+            if new_state == "ON":
+                map_widget._active_fp_target = target_id
+                print(f"[Python] Set _active_fp_target = {target_id}")
+            elif map_widget._active_fp_target == target_id:
+                map_widget._active_fp_target = None
+                print(f"[Python] Cleared _active_fp_target (was {target_id})")
+        
+        # Now toggle the per-drone footprint state in Python (emits signals that will render)
+        if was_active:
+            print(f"[Python] Disabling drone footprint for {nid}:{sid}")
+            window.footprint_manager.disable_drone_footprint(nid, sid)
+        else:
+            print(f"[Python] Enabling drone footprint for {nid}:{sid}")
+            window.footprint_manager.enable_drone_footprint(nid, sid)
 
     # Mission Planner Handlers
     def on_takeoff(target_id):
@@ -774,6 +891,9 @@ def main():
     window.tab_ops.map_widget.takeoff_requested.connect(on_takeoff)
     window.tab_ops.map_widget.start_mission_requested.connect(on_start_mission)
     window.tab_ops.map_widget.mission_upload_requested.connect(on_mission_upload)
+    
+    # Camera Footprint toggle from map context menu
+    window.tab_ops.map_widget.footprint_toggle_requested.connect(on_footprint_toggle_from_map)
 
     # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()

@@ -131,6 +131,30 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
    }}
   #mission-toggle-btn:hover {{ background: #00ddff; color: #000; }}
+  
+  /* Custom Popup Styling */
+  .gcs-popup .leaflet-popup-content-wrapper {{ background: rgba(9, 21, 28, 0.94); border: 1px solid #00ddff; border-radius: 4px; padding: 0; box-shadow: 0 4px 15px rgba(0,0,0,0.8); }}
+  .gcs-popup .leaflet-popup-tip {{ background: #00ddff; }}
+  .gcs-popup .leaflet-popup-content {{ margin: 8px; width: auto !important; }}
+
+  /* Camera Footprint Overlay Styling */
+  #footprint-toggle-btn {{
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5000;
+      background: rgba(9, 21, 28, 0.94); border: 1px solid #ffaa00; color: #ffaa00;
+      padding: 6px 14px; border-radius: 6px; font-weight: bold; font-size: 11px;
+      cursor: pointer; letter-spacing: 0.5px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      display: none; transition: all 0.3s;
+   }}
+  #footprint-toggle-btn:hover {{ background: rgba(255, 170, 0, 0.2); }}
+  #footprint-toggle-btn.active {{ background: #ffaa00; color: #000; }}
+
+  /* Footprint info label */
+  #footprint-info {{
+      position: absolute; bottom: 10px; left: 10px; z-index: 5000;
+      background: rgba(9, 21, 28, 0.9); border: 1px solid rgba(255, 170, 0, 0.4);
+      color: #ffaa00; padding: 6px 12px; border-radius: 4px; font-size: 10px;
+      font-family: monospace; display: none; pointer-events: none;
+  }}
 </style>
 </head>
 <body>
@@ -161,6 +185,9 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
 
 <div id="map"></div>
 
+<button id="footprint-toggle-btn" onclick="toggleFootprints()">FOOTPRINT</button>
+<div id="footprint-info"></div>
+
 <script>
   var bridge = null;
   new QWebChannel(qt.webChannelTransport, function(channel) {{
@@ -178,6 +205,328 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   var missionWaypoints = [];
   var missionMarkers = [];
   var missionPolyline = L.polyline([], {{ color: '#00ddff', weight: 2, opacity: 0.8 }}).addTo(map);
+
+  // =========================================================================
+  // CAMERA FOOTPRINT OVERLAY SYSTEM
+  // =========================================================================
+  var footprintsVisible = false;
+  var footprintLayers = {{}};  // key -> L.polygon reference (outline)
+  var activeFootprints = {{}};  // key -> true/false per-drone state
+  var footprintVideoElements = {{}};  // key -> {{overlay, video}} for video streaming
+  var footprintFrameQueue = {{}}; // key -> array of jpeg bytes to display
+
+  function setDroneFootprintState(key, isActive) {{
+    // key is "node_id:sysid" from Python, convert to "_" separator for internal use
+    var internalKey = key.replace(":", "_");
+    activeFootprints[internalKey] = isActive;
+    console.log("[JS] setDroneFootprintState: key=" + key + " internalKey=" + internalKey + " isActive=" + isActive);
+    console.log("[JS] Available footprintLayers keys:", Object.keys(footprintLayers));
+    if (isActive) {{
+      // Trigger recalculation via footprint manager signal
+      console.log("[JS] Footprint enabled for " + key);
+    }} else {{
+      // Clear the polygon and video overlay using internalKey
+      if (footprintLayers[internalKey]) {{
+        console.log("[JS] Clearing footprint layer for internalKey=" + internalKey);
+        map.removeLayer(footprintLayers[internalKey]);
+        delete footprintLayers[internalKey];
+      }} else {{
+        console.log("[JS] No footprint layer found for internalKey=" + internalKey);
+      }}
+      // Remove video overlay if exists (using div-based approach)
+      clearFootprintVideoFromKey(internalKey);
+      delete footprintFrameQueue[internalKey];
+      console.log("[JS] Footprint disabled for " + key);
+    }}
+  }}
+  
+  // Helper to clear video overlay by internalKey (underscore format)
+  function clearFootprintVideoFromKey(key) {{
+    var vpe = footprintVideoElements[key];
+    if (vpe) {{
+      // Remove the element from DOM
+      if (vpe.element && vpe.element.parentNode) {{
+        vpe.element.parentNode.removeChild(vpe.element);
+      }}
+      footprintVideoElements[key] = null;
+      console.log("[JS] Cleared footprint video overlay for key=" + key);
+    }}
+  }}
+
+  function toggleFootprints() {{
+    footprintsVisible = !footprintsVisible;
+    var btn = document.getElementById('footprint-toggle-btn');
+    var info = document.getElementById('footprint-info');
+
+    if (footprintsVisible) {{
+      btn.classList.add('active');
+      btn.textContent = "FOOTPRINTS ON";
+      info.style.display = 'block';
+      // Show existing footprint layers
+      for (var key in footprintLayers) {{
+        if (footprintLayers[key]) footprintLayers[key].addTo(map);
+      }}
+    }} else {{
+      btn.classList.remove('active');
+      btn.textContent = "FOOTPRINT";
+      info.style.display = 'none';
+      // Hide all footprint layers and video overlays
+      for (var key in footprintLayers) {{
+        if (footprintLayers[key]) {{
+          map.removeLayer(footprintLayers[key]);
+          delete footprintLayers[key];
+        }}
+      }}
+      footprintLayers = {{}};
+      // Also remove all video overlays
+      for (var vk in footprintVideoElements) {{
+        clearFootprintVideoFromKey(vk);
+      }}
+      footprintVideoElements = {{}};
+    }}
+  }}
+
+  function updateFootprint(node_id, sysid, corners, area_m2) {{
+    if (!corners || corners.length < 3) return;
+    
+    // Check if this specific drone has footprint enabled OR global is on
+    var key = node_id + "_" + sysid;
+    var droneActive = activeFootprints[key] === true;
+    if (!droneActive && !footprintsVisible) return;
+    var latLngs = corners.map(function(c) {{ return [c[0], c[1]]; }});
+
+    // Create or update the footprint polygon
+    if (footprintLayers[key]) {{
+      footprintLayers[key].setLatLngs(latLngs);
+    }} else {{
+      footprintLayers[key] = L.polygon(latLngs, {{
+        color: '#ffaa00',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#ffaa00',
+        fillOpacity: 0.15,
+        dashArray: '4, 4',
+        className: 'footprint-polygon'
+      }}).addTo(map);
+
+      // Add tooltip with area info
+      footprintLayers[key].bindTooltip(
+        "Camera Footprint<br>Area: " + Math.round(area_m2) + " m²",
+        {{ sticky: true, direction: 'top', className: 'footprint-tooltip' }}
+      );
+    }}
+
+    // Update info panel
+    var info = document.getElementById('footprint-info');
+    if (info) {{
+      info.innerHTML = "FP: Node " + node_id + ":Sys" + sysid + " | Area: " + Math.round(area_m2) + " m²";
+    }}
+  }}
+
+  function clearFootprint(node_id, sysid) {{
+    var key = node_id + "_" + sysid;
+    if (footprintLayers[key]) {{
+      map.removeLayer(footprintLayers[key]);
+      delete footprintLayers[key];
+    }}
+    // Also clear video overlay
+    clearFootprintVideoFromKey(key);
+  }}
+
+  function clearAllFootprints() {{
+    for (var key in footprintLayers) {{
+      if (footprintLayers[key]) {{
+        map.removeLayer(footprintLayers[key]);
+      }}
+    }}
+    footprintLayers = {{}};
+    // Clear all video overlays too
+    for (var vk in footprintVideoElements) {{
+      clearFootprintVideoFromKey(vk);
+    }}
+    footprintVideoElements = {{}};
+  }}
+
+  // =========================================================================
+  // VIDEO FRAME UPDATE FOR FOOTPRINT OVERLAY
+  // =========================================================================
+  
+  /**
+   * Create a video overlay element for footprint display.
+   * Uses Leaflet's overlay pane for proper z-index management.
+   */
+  function createFootprintVideoOverlay(node_id, sysid) {{
+    var key = node_id + "_" + sysid;
+    
+    // Check if this drone has footprint enabled
+    var droneActive = activeFootprints[key] === true;
+    if (!droneActive) {{
+      console.warn("[JS] Footprint video skipped: drone not active for key=" + key);
+      return null;
+    }}
+    
+    // Don't create if already exists
+    if (footprintVideoElements[key]) {{
+      console.log("[JS] Footprint video overlay already exists for key=" + key);
+      return footprintVideoElements[key];
+    }}
+    
+    console.log("[JS] Creating footprint video overlay for key=" + key);
+    
+    // Create a unique ID for this overlay's container div
+    var containerId = 'fp-video-' + key.replace(/_/g, '-');
+    
+    // Create the outer container with styling
+    var overlayDiv = document.createElement('div');
+    overlayDiv.id = containerId;
+    overlayDiv.style.width = '180px';
+    overlayDiv.style.height = '135px';
+    overlayDiv.style.position = 'absolute';  // Position relative to map container
+    overlayDiv.style.pointerEvents = 'none';  // Let clicks pass through to map
+    overlayDiv.style.border = '2px solid rgba(255, 170, 0, 0.9)';
+    overlayDiv.style.borderRadius = '6px';
+    overlayDiv.style.overflow = 'hidden';
+    overlayDiv.style.background = '#000';
+    overlayDiv.style.boxShadow = '0 2px 12px rgba(0,0,0,0.6)';
+    overlayDiv.style.opacity = '0.85';
+    overlayDiv.style.zIndex = '10000';  // High z-index to be above all Leaflet panes
+    
+    // Create an img element (not video — we're displaying JPEG stills)
+    var imgEl = document.createElement('img');
+    imgEl.style.width = '100%';
+    imgEl.style.height = '100%';
+    imgEl.style.objectFit = 'cover';
+    imgEl.style.display = 'block';
+    imgEl.style.background = '#000';
+    
+    overlayDiv.appendChild(imgEl);
+    
+    // Add directly to the map container (NOT overlay pane) because Leaflet's
+    // .leaflet-overlay-pane has transform: translate3d(...) which breaks absolute positioning
+    var mapContainer = map.getContainer();
+    
+    // Ensure the map container has position: relative for absolute children
+    if (mapContainer.style.position !== 'relative' && mapContainer.style.position !== 'absolute') {{
+      mapContainer.style.position = 'relative';
+    }}
+    
+    console.log("[JS] Appending overlayDiv directly to map container");
+    mapContainer.appendChild(overlayDiv);
+    
+    // Verify the element is in the DOM
+    if (!document.body.contains(overlayDiv) && !mapContainer.contains(overlayDiv)) {{
+      console.error("[JS] ERROR: overlayDiv was NOT appended to DOM!");
+    }} else {{
+      console.log("[JS] overlayDiv successfully added to DOM");
+    }}
+    
+    // Store the reference
+    var overlayRef = {{
+      element: overlayDiv,
+      img: imgEl,
+      containerId: containerId,
+      node_id: node_id,
+      sysid: sysid
+    }};
+    
+    footprintVideoElements[key] = overlayRef;
+    
+    console.log("[JS] Footprint video overlay created and stored for key=" + key);
+    
+    return overlayRef;
+  }}
+  
+  /**
+   * Update the video frame for a footprint overlay.
+   */
+  function updateFootprintVideo(node_id, sysid, jpeg_base64) {{
+    var key = node_id + "_" + sysid;
+    
+    // Log every call for debugging
+    console.log("[JS] updateFootprintVideo called: key=" + key + ", jpeg_base64 length=" + (jpeg_base64 ? jpeg_base64.length : 0));
+    
+    // Check if drone has footprint enabled
+    if (activeFootprints[key] !== true) {{
+      console.log("[JS] updateFootprintVideo skipped: drone not active for key=" + key);
+      return;
+    }}
+    
+    // Create overlay if it doesn't exist yet
+    if (!footprintVideoElements[key]) {{
+      console.log("[JS] Creating new footprint video overlay in updateFootprintVideo");
+      createFootprintVideoOverlay(node_id, sysid);
+    }}
+    
+    // Update the img source with new frame
+    var vpe = footprintVideoElements[key];
+    if (vpe && vpe.img) {{
+      vpe.img.src = "data:image/jpeg;base64," + jpeg_base64;
+    }}
+  }}
+  
+  /**
+   * Position the video overlay at a specific lat/lon on the map.
+   */
+  function updateFootprintVideoPosition(node_id, sysid, lat, lon) {{
+    var key = node_id + "_" + sysid;
+    var vpe = footprintVideoElements[key];
+    
+    if (!vpe || !vpe.element) {{
+      console.log("[JS] WARNING: No overlay element for key=" + key);
+      return;
+    }}
+    
+    // Convert lat/lon to pixel coordinates relative to the map container
+    var point = map.latLngToContainerPoint([lat, lon]);
+    
+    // Position the overlay centered on the point (offset by half its size)
+    vpe.element.style.left = (point.x - 90) + 'px';   // 180px / 2 = 90px offset
+    vpe.element.style.top = (point.y - 67) + 'px';    // 135px / 2 = 67.5px offset
+    
+    console.log("[JS] Positioned video overlay for key=" + key + " at pixel(" + point.x + "," + point.y + "), element offsetLeft=" + vpe.element.offsetLeft + " offsetTop=" + vpe.element.offsetTop);
+    
+    // Debug: log the map container's dimensions and offset
+    var mc = map.getContainer();
+    console.log("[JS] Map container: width=" + mc.offsetWidth + ", height=" + mc.offsetHeight);
+  }}
+
+  function clearFootprintVideo(node_id, sysid) {{
+    var key = node_id + "_" + sysid;
+    var vpe = footprintVideoElements[key];
+    
+    if (vpe) {{
+      // Remove the element from DOM
+      if (vpe.element && vpe.element.parentNode) {{
+        vpe.element.parentNode.removeChild(vpe.element);
+      }}
+      
+      // Clear the reference
+      footprintVideoElements[key] = null;
+      console.log("[JS] Cleared footprint video overlay for key=" + key);
+    }}
+  }}
+
+  function setFootprintVisibility(visible) {{
+    if (visible && !footprintsVisible) {{
+      footprintsVisible = true;
+      var btn = document.getElementById('footprint-toggle-btn');
+      btn.classList.add('active');
+      btn.textContent = "FOOTPRINTS ON";
+      document.getElementById('footprint-info').style.display = 'block';
+      for (var key in footprintLayers) {{
+        if (footprintLayers[key]) footprintLayers[key].addTo(map);
+      }}
+    }} else if (!visible && footprintsVisible) {{
+      footprintsVisible = false;
+      var btn = document.getElementById('footprint-toggle-btn');
+      btn.classList.remove('active');
+      btn.textContent = "FOOTPRINT";
+      document.getElementById('footprint-info').style.display = 'none';
+      for (var key in footprintLayers) {{
+        if (footprintLayers[key]) map.removeLayer(footprintLayers[key]);
+      }}
+    }}
+  }}
 
   function toggleMissionMode() {{
     var btn = document.getElementById('mission-toggle-btn');
@@ -371,6 +720,20 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
       </svg>`;
       trackerDrones[key] = L.marker([lat, lon], {{ icon: L.divIcon({{ html: droneSvg, className: '', iconSize: [34,34], iconAnchor: [17,17] }}) }}).addTo(map);
       
+      var popupContent = `
+        <div style="font-family: monospace; color: #fff; min-width: 150px;">
+            <div style="font-weight: bold; color: #00ddff; margin-bottom: 8px; border-bottom: 1px solid rgba(0,221,255,0.3); padding-bottom: 4px;">DRONE ${{sysid}} (Node ${{node_id}})</div>
+            <button class="btn-takeoff" onclick="console.log('TAKEOFF clicked'); if(window.bridge) bridge.on_takeoff_request('${{node_id}}:${{sysid}}')" style="width:100%; padding: 8px; cursor: pointer; border-radius: 3px; font-weight: bold;">TAKEOFF</button>
+            <button class="btn-start" onclick="console.log('AUTO MODE clicked'); if(window.bridge) bridge.on_start_mission_request('${{node_id}}:${{sysid}}')" style="width:100%; padding: 8px; cursor: pointer; margin-top:4px; border-radius: 3px; font-weight: bold;">AUTO MODE</button>
+            <div style="margin-top: 8px; border-top: 1px solid rgba(255,170,0,0.3); padding-top: 6px;">
+                <button id="fp-btn-${{node_id}}:${{sysid}}" onclick="console.log('FOOTPRINT toggle clicked for ${{node_id}}:${{sysid}}'); if(window.bridge) bridge.on_footprint_toggle('${{node_id}}:${{sysid}}')" style="width:100%; padding: 8px; cursor: pointer; border-radius: 3px; font-weight: bold; background: rgba(255,170,0,0.2); border: 1px solid #ffaa00; color: #ffaa00;">
+                    📷 FOOTPRINT OFF
+                </button>
+            </div>
+        </div>
+      `;
+      trackerDrones[key].bindPopup(popupContent, {{className: 'gcs-popup', closeButton: false}});
+      
       // Context Menu Listener - ATTACH ONCE ONLY 🛰️
       trackerDrones[key].on('contextmenu', function(e) {{
         if (bridge) {{
@@ -396,10 +759,26 @@ class MapBridge(QObject):
     takeoff_requested = Signal(str) # target_id
     start_mission_requested = Signal(str) # target_id
     drone_context_menu_requested = Signal(str) # target_id
+    footprint_toggle_requested = Signal(str) # target_id
+    footprint_state_changed = Signal(str, bool) # target_id, is_active
 
     @Slot(str)
     def on_drone_context_menu(self, target_id):
         self.drone_context_menu_requested.emit(target_id)
+
+    @Slot(str)
+    def on_footprint_toggle(self, target_id):
+        self.footprint_toggle_requested.emit(target_id)
+
+    @Slot(str, bool)
+    def on_footprint_toggle_js(self, target_id, is_active):
+        """Called from JavaScript to update button text."""
+        pass  # Handled via Python side
+
+    @Slot(str, bool)
+    def set_drone_footprint_state(self, target_id, is_active):
+        """Notify JavaScript about per-drone footprint state change."""
+        self.footprint_state_changed.emit(target_id, is_active)
 
     @Slot(float, float)
     def on_map_click(self, lat, lon):
@@ -423,6 +802,8 @@ class SatelliteMapWidget(QWidget):
     takeoff_requested = Signal(str)
     start_mission_requested = Signal(str)
     drone_context_menu_requested = Signal(str)
+    footprint_toggle_requested = Signal(str)  # target_id
+    footprint_state_changed = Signal(str, bool)  # target_id, is_active
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -434,6 +815,11 @@ class SatelliteMapWidget(QWidget):
         self._bridge.takeoff_requested.connect(self.takeoff_requested.emit)
         self._bridge.start_mission_requested.connect(self.start_mission_requested.emit)
         self._bridge.drone_context_menu_requested.connect(self.drone_context_menu_requested.emit)
+        self._bridge.footprint_toggle_requested.connect(self.footprint_toggle_requested.emit)
+        # Connect footprint state changes to update _active_fp_target tracking
+        self._bridge.footprint_state_changed.connect(self._on_footprint_state_changed)
+        # Track which drone footprint is active for video overlay routing
+        self._active_fp_target = None  # e.g. "1:1" or None
         self._setup_tile_server()
         self._setup_ui()
 
@@ -466,9 +852,159 @@ class SatelliteMapWidget(QWidget):
         hdg = heading if heading is not None else "null"
         js = f"updateDronePosition({node_id}, {sysid}, {lat}, {lon}, {hdg}, '{color}');"
         self._web_view.page().runJavaScript(js)
+        
+        # Update video overlay position if this drone has an active footprint with video
+        target_id = f"{node_id}:{sysid}"
+        if self._active_fp_target == target_id:
+            js = f"updateFootprintVideoPosition({node_id}, {sysid}, {lat}, {lon});"
+            self._web_view.page().runJavaScript(js)
 
     def remove_drone(self, node_id, sysid):
         self._web_view.page().runJavaScript(f"removeDrone({node_id}, {sysid});")
+
+    # ------------------------------------------------------------------
+    # Camera Footprint Controls
+    # ------------------------------------------------------------------
+
+    def set_footprints_visible(self, visible):
+        """Show or hide all footprint overlays on the map."""
+        js = f"setFootprintVisibility({str(visible).lower()});"
+        self._web_view.page().runJavaScript(js)
+
+    def update_footprint(self, node_id, sysid, corners, area_m2):
+        """Update the footprint polygon for a specific drone.
+
+        Parameters:
+            node_id: Drone node identifier (int)
+            sysid: Drone system ID (int)
+            corners: List of [lat, lon] pairs or None
+            area_m2: Approximate ground area in square metres (float)
+        """
+        if corners is None or len(corners) < 3:
+            # Clear footprint if invalid
+            js = f"updateFootprint({node_id}, {sysid}, null, 0);"
+        else:
+            # Convert corners to JSON-compatible format
+            corners_str = "[" + ",".join(f"[{c[0]},{c[1]}]" for c in corners) + "]"
+            js = f"updateFootprint({node_id}, {sysid}, {corners_str}, {area_m2});"
+        self._web_view.page().runJavaScript(js)
+
+    def add_footprint(self, node_id, sysid, corners, area_m2):
+        """Add/update a camera footprint polygon on the map.
+
+        Parameters:
+            node_id: Drone node ID
+            sysid: Drone system ID
+            corners: List of [lat, lon] pairs forming the footprint polygon
+            area_m2: Approximate ground area in square metres
+        """
+        if not corners or len(corners) < 3:
+            return
+        corners_str = "[" + ",".join(f"[{c[0]},{c[1]}]" for c in corners) + "]"
+        js = f"updateFootprint({node_id}, {sysid}, {corners_str}, {area_m2});"
+        self._web_view.page().runJavaScript(js)
+
+    def clear_footprint(self, node_id, sysid):
+        """Clear the footprint overlay for a specific drone."""
+        js = f"clearFootprint({node_id}, {sysid});"
+        self._web_view.page().runJavaScript(js)
+        # Also clear video overlay
+        js = f"clearFootprintVideo({node_id}, {sysid});"
+        self._web_view.page().runJavaScript(js)
+
+    def clear_all_footprints(self):
+        """Clear all footprint overlays."""
+        self._web_view.page().runJavaScript("clearAllFootprints();")
+    def _on_footprint_state_changed(self, target_id, is_active):
+        """Called when MapBridge receives footprint state change from JavaScript.
+        
+        This updates the internal tracking for video overlay routing.
+        """
+        if is_active:
+            self._active_fp_target = target_id
+        elif self._active_fp_target == target_id:
+            self._active_fp_target = None
+    
+    def set_drone_footprint_state(self, node_id, sysid, is_active):
+        """Notify JavaScript about per-drone footprint state change.
+        
+        Also tracks the active drone for video overlay routing.
+        
+        Parameters:
+            node_id: Drone node ID
+            sysid: Drone system ID
+            is_active: True if footprint is active, False otherwise
+        """
+        target_id = f"{node_id}:{sysid}"
+        js = f"setDroneFootprintState('{target_id}', {str(is_active).lower()});"
+        self._web_view.page().runJavaScript(js)
+        
+        
+    def update_footprint_video_bytes(self, node_id, jpeg_bytes):
+        """Update the video frame for a drone's footprint overlay from raw bytes.
+        
+        The VideoThread emits with node_id="main", so we use the currently
+        active drone footprint target_id instead.
+        
+        Parameters:
+            node_id: Drone node ID (or "main" from VideoThread)
+            jpeg_bytes: Raw JPEG image bytes
+        """
+        # Debug logging
+        if not hasattr(self, '_fp_update_count'):
+            self._fp_update_count = 0
+        self._fp_update_count += 1
+        
+        # If node_id is "main" (from VideoThread), use the active drone footprint key
+        if node_id == "main":
+            if not self._active_fp_target:
+                # No active footprint, skip but log occasionally
+                if self._fp_update_count % 50 == 1:
+                    print(f"[Python] update_footprint_video_bytes: skipping, no _active_fp_target")
+                return
+            target_id = self._active_fp_target
+        else:
+            target_id = f"{node_id}:1"
+        
+        # Parse target_id to get node_id and sysid for JS call
+        parts = target_id.split(":")
+        if len(parts) == 2:
+            j_nid, j_sid = parts[0], int(parts[1])
+        else:
+            # Fallback: use "main" as node_id and sysid=1
+            j_nid, j_sid = "main", 1
+        
+        import base64
+        encoded = base64.b64encode(jpeg_bytes).decode('ascii')
+        
+        # Escape the base64 string for JavaScript safety
+        safe_encoded = encoded.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")
+        
+        # Log every 100th update to avoid spam
+        if self._fp_update_count % 100 == 1:
+            print(f"[Python] update_footprint_video_bytes: j_nid={j_nid}, j_sid={j_sid}, jpeg_bytes_len={len(jpeg_bytes)}, _active_fp_target={self._active_fp_target}")
+        
+        js = f"updateFootprintVideo('{j_nid}', {j_sid}, '{safe_encoded}');"
+        self._web_view.page().runJavaScript(js)
+        
+    def update_footprint_video(self, node_id, sysid, jpeg_base64):
+        """Update the video frame for a specific drone's footprint overlay.
+        
+        Parameters:
+            node_id: Drone node ID
+            sysid: Drone system ID
+            jpeg_base64: Base64-encoded JPEG image data (string)
+        """
+        js = f"updateFootprintVideo({node_id}, {sysid}, '{jpeg_base64}');"
+        self._web_view.page().runJavaScript(js)
+        """Clear all footprint overlays."""
+        self._web_view.page().runJavaScript("clearAllFootprints();")
+
+    def show_footprint_toggle_button(self, show):
+        """Show or hide the footprint toggle button on the map."""
+        display = "block" if show else "none"
+        js = f"document.getElementById('footprint-toggle-btn').style.display = '{display}';"
+        self._web_view.page().runJavaScript(js)
 
     def cleanup(self):
         if self._tile_server: self._tile_server.stop()
