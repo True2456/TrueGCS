@@ -70,28 +70,28 @@ TrueGCS now supports **SDK V5 compatible DJI drones** via the **TrueGCS-DJI (And
 ```mermaid
 graph TD
     subgraph "External Management"
-        I[Brain / OpenClaw Server]
+        I["Brain / OpenClaw Server"]
     end
 
     subgraph "TrueGCS (GCS)"
         A[main.py] --> B[Telemetry Thread]
         A --> C[Video Thread]
-        A --> J[ConnectionManager / BrainClient]
+        A --> J["ConnectionManager / BrainClient"]
         C --> D[YOLOv8 Inference]
         C --> E[PID Gimbal Controller]
     end
 
     subgraph "RC Link (ELRS)"
-        K[RC Remotes / ELRS Backpacks]
+        K["RC Remotes / ELRS Backpacks"]
     end
 
     subgraph "TrueGCS-DJI (Android App)"
         F[StreamingManager]
-        G[DJI SDK V5]
+        G["DJI SDK V5"]
     end
 
     subgraph "Hardware"
-        H[Any DJI Drone (SDK V5)]
+        H["Any DJI Drone (SDK V5)"]
         L[Custom Quadcopter]
         M[VTOL Platform]
     end
