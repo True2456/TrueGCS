@@ -69,9 +69,14 @@ TrueGCS now supports **DJI Mini 3** and **Mini 3 Pro** platforms via the custom 
 
 ```mermaid
 graph TD
+    subgraph "External Management"
+        I[Brain / OpenClaw Server]
+    end
+
     subgraph "TrueGCS (GCS)"
         A[main.py] --> B[Telemetry Thread]
         A --> C[Video Thread]
+        A --> J[ConnectionManager / BrainClient]
         C --> D[YOLOv8 Inference]
         C --> E[PID Gimbal Controller]
     end
@@ -85,6 +90,7 @@ graph TD
         H[DJI Mini 3 / Pro]
     end
 
+    J <-- "Socket.io (Stealth Telemetry & Commands)" --> I
     B <-- "MAVLink over UDP" --> F
     E -- "Mount Control Commands" --> F
     F <-- "DJI SDK Protocols" --> G
@@ -97,6 +103,8 @@ TrueGCS/
 ├── main.py                  # Secure entry point (Bundle-Aware)
 ├── core/
 │   ├── shield.py            # TrueShield™ Encryption/Decryption Layer
+│   ├── brain_client.py      # Secure Socket.io Link to OpenClaw Brain
+│   ├── connection_manager.py # Automated Command/Telemetry Routing
 │   ├── utils.py             # Robust Binary Locator (FFmpeg/GStreamer)
 │   └── tile_cache.py        # Offline Tile Server & CDN Fallback
 ├── telemetry/               # [Cython Compiled] MAVLink Node Logic
