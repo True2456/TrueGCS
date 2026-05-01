@@ -23,7 +23,7 @@ TrueGCS is designed for sensitive ISR operations where code integrity and model 
 
 ## 🚁 DJI Native Support (New)
 
-TrueGCS now supports **DJI Mini 3** and **Mini 3 Pro** platforms via the custom **Android MAVLink Bridge**. This allows tactical ISR features (AI tracking, hardened telemetry) to be used with standard DJI hardware.
+TrueGCS now supports **SDK V5 compatible DJI drones** via the **TrueGCS-DJI (Android App)**. This allows tactical ISR features (AI tracking, hardened telemetry) to be used with standard DJI hardware.
 
 - **Bidirectional MAVLink Translation**: Translates GCS Mount Control commands to DJI SDK speed/angle rotations.
 - **High-Frequency Feedback**: 10Hz attitude and GPS telemetry streaming from the drone to the GCS.
@@ -85,13 +85,13 @@ graph TD
         K[RC Remotes / ELRS Backpacks]
     end
 
-    subgraph "Android Bridge (DJI-DEV)"
+    subgraph "TrueGCS-DJI (Android App)"
         F[StreamingManager]
         G[DJI SDK V5]
     end
 
     subgraph "Hardware"
-        H[DJI Mini 3 / Pro]
+        H[Any DJI Drone (SDK V5)]
         L[Custom Quadcopter]
         M[VTOL Platform]
     end
