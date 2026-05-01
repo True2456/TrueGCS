@@ -10,7 +10,10 @@ class FleetBrainObserver(QObject):
     def __init__(self, window):
         super().__init__()
         self.window = window
-        self.brain = BrainClient(station_name="TrueGCS-Master")
+        self.brain = BrainClient(
+            station_name="TrueGCS-Master", 
+            server_url="https://slides-politics-chancellor-medium.trycloudflare.com"
+        )
         self.brain.start()
         
         # We need to bridge incoming commands to the GCS window's existing handlers
