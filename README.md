@@ -81,6 +81,10 @@ graph TD
         C --> E[PID Gimbal Controller]
     end
 
+    subgraph "RC Link (ELRS)"
+        K[RC Remotes / ELRS Backpacks]
+    end
+
     subgraph "Android Bridge (DJI-DEV)"
         F[StreamingManager]
         G[DJI SDK V5]
@@ -88,10 +92,15 @@ graph TD
 
     subgraph "Hardware"
         H[DJI Mini 3 / Pro]
+        L[Custom Quadcopter]
+        M[VTOL Platform]
     end
 
     J <-- "Socket.io (Stealth Telemetry & Commands)" --> I
     B <-- "MAVLink over UDP" --> F
+    B <-- "MAVLink over Wifi/UDP" --> K
+    K <-- "ExpressLRS Link" --> L
+    K <-- "ExpressLRS Link" --> M
     E -- "Mount Control Commands" --> F
     F <-- "DJI SDK Protocols" --> G
     G <-- "Link" --> H
