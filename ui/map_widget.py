@@ -294,6 +294,7 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   var activeFootprints = {{}};  // key -> true/false per-drone state
   var footprintVideoElements = {{}};  // key -> {{overlay, video}} for video streaming
   var footprintFrameQueue = {{}}; // key -> array of jpeg bytes to display
+  var droneHeadings = {{}}; // Track drone headings for video rotation
 
   function setDroneFootprintState(key, isActive) {{
     // key is "node_id:sysid" from Python, convert to "_" separator for internal use
@@ -331,6 +332,36 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
       footprintVideoElements[key] = null;
       console.log("[JS] Cleared footprint video overlay for key=" + key);
     }}
+  }}
+
+  // AI Target Geolocation Markers
+  var aiTargetMarkers = [];
+
+  function addAITargetMarker(lat, lon, label) {{
+    var icon = L.divIcon({{
+      className: '',
+      html: '<div style="\
+        width:14px;height:14px;border-radius:50%;border:2px solid #ff3232;\
+        background:rgba(255,50,50,0.4);box-shadow:0 0 10px #ff3232;position:relative\
+      "><span style="\
+        position:absolute;top:-20px;left:50%;transform:translateX(-50%);\
+        color:#ff3232;font-size:9px;font-weight:bold;white-space:nowrap;\
+        text-shadow:0 0 4px #000;letter-spacing:0.5px;\
+      ">' + label + '</span></div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    }});
+    var marker = L.marker([lat, lon], {{icon: icon}}).addTo(map);
+    marker.bindPopup('<div style="color:#ff3232;font-weight:bold;font-size:12px;">⬤ AI TARGET<br/>' + label + '<br/><span style="color:#92b0c3;font-size:10px;">' + lat.toFixed(7) + ', ' + lon.toFixed(7) + '</span></div>');
+    aiTargetMarkers.push(marker);
+    // Auto-open popup
+    marker.openPopup();
+    return marker;
+  }}
+
+  function clearAITargetMarkers() {{
+    aiTargetMarkers.forEach(function(m) {{ map.removeLayer(m); }});
+    aiTargetMarkers = [];
   }}
 
   function toggleFootprints() {{
@@ -389,11 +420,55 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
         className: 'footprint-polygon'
       }}).addTo(map);
 
-      // Add tooltip with area info
+    // Add tooltip with area info
       footprintLayers[key].bindTooltip(
         "Camera Footprint<br>Area: " + Math.round(area_m2) + " m²",
         {{ sticky: true, direction: 'top', className: 'footprint-tooltip' }}
       );
+    }}
+
+    // Position video overlay at centroid of the polygon and scale it
+    var vpe = footprintVideoElements[key];
+    if (vpe && vpe.element && latLngs.length >= 3) {{
+      var clat = 0, clon = 0;
+      for (var i = 0; i < latLngs.length; i++) {{
+        clat += latLngs[i][0];
+        clon += latLngs[i][1];
+      }}
+      clat /= latLngs.length;
+      clon /= latLngs.length;
+      
+      var centroidPoint = map.latLngToContainerPoint([clat, clon]);
+      
+      // Calculate a rough scale for the video based on the polygon's geographic size in pixels
+      var maxDistSq = 0;
+      for (var i = 0; i < latLngs.length; i++) {{
+        for (var j = i+1; j < latLngs.length; j++) {{
+          var pA = map.latLngToContainerPoint(latLngs[i]);
+          var pB = map.latLngToContainerPoint(latLngs[j]);
+          var dx = pA.x - pB.x;
+          var dy = pA.y - pB.y;
+          var distSq = dx*dx + dy*dy;
+          if (distSq > maxDistSq) maxDistSq = distSq;
+        }}
+      }}
+      var maxPixelDist = Math.sqrt(maxDistSq);
+      
+      // 4:3 aspect ratio approx from diagonal (3-4-5 triangle)
+      var w = maxPixelDist * 0.8;
+      var h = maxPixelDist * 0.6;
+      
+      w = Math.max(w, 40);
+      h = Math.max(h, 30);
+      
+      vpe.element.style.width = w + 'px';
+      vpe.element.style.height = h + 'px';
+      vpe.element.style.left = (centroidPoint.x - w / 2) + 'px';
+      vpe.element.style.top  = (centroidPoint.y - h / 2) + 'px';
+      
+      var hdg = droneHeadings[key] || 0;
+      vpe.element.style.transformOrigin = 'center center';
+      vpe.element.style.transform = 'rotate(' + hdg + 'deg)';
     }}
 
     // Update info panel
@@ -463,13 +538,11 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     overlayDiv.style.height = '135px';
     overlayDiv.style.position = 'absolute';  // Position relative to map container
     overlayDiv.style.pointerEvents = 'none';  // Let clicks pass through to map
-    overlayDiv.style.border = '2px solid rgba(255, 170, 0, 0.9)';
-    overlayDiv.style.borderRadius = '6px';
+    overlayDiv.style.border = 'none';         // No border — the footprint polygon is the boundary
+    overlayDiv.style.borderRadius = '0px';
     overlayDiv.style.overflow = 'hidden';
-    overlayDiv.style.background = '#000';
-    overlayDiv.style.boxShadow = '0 2px 12px rgba(0,0,0,0.6)';
-    overlayDiv.style.opacity = '0.85';
-    overlayDiv.style.zIndex = '10000';  // High z-index to be above all Leaflet panes
+    overlayDiv.style.opacity = '0.88';
+    overlayDiv.style.zIndex = '10000';
     
     // Create an img element (not video — we're displaying JPEG stills)
     var imgEl = document.createElement('img');
@@ -546,28 +619,11 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   
   /**
    * Position the video overlay at a specific lat/lon on the map.
+   * Deprecated: Positioning is now handled inside updateFootprint using the polygon centroid.
    */
-  function updateFootprintVideoPosition(node_id, sysid, lat, lon) {{
-    var key = node_id + "_" + sysid;
-    var vpe = footprintVideoElements[key];
-    
-    if (!vpe || !vpe.element) {{
-      console.log("[JS] WARNING: No overlay element for key=" + key);
-      return;
-    }}
-    
-    // Convert lat/lon to pixel coordinates relative to the map container
-    var point = map.latLngToContainerPoint([lat, lon]);
-    
-    // Position the overlay centered on the point (offset by half its size)
-    vpe.element.style.left = (point.x - 90) + 'px';   // 180px / 2 = 90px offset
-    vpe.element.style.top = (point.y - 67) + 'px';    // 135px / 2 = 67.5px offset
-    
-    console.log("[JS] Positioned video overlay for key=" + key + " at pixel(" + point.x + "," + point.y + "), element offsetLeft=" + vpe.element.offsetLeft + " offsetTop=" + vpe.element.offsetTop);
-    
-    // Debug: log the map container's dimensions and offset
-    var mc = map.getContainer();
-    console.log("[JS] Map container: width=" + mc.offsetWidth + ", height=" + mc.offsetHeight);
+  function updateFootprintVideoPosition(node_id, sysid, lat, lon, heading_deg) {{
+    // No-op. Video position and scaling is now dynamically handled inside updateFootprint() 
+    // to match the exact centroid and size of the geographic polygon.
   }}
 
   function clearFootprintVideo(node_id, sysid) {{
@@ -1024,6 +1080,9 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   var trackerDrones = {{}};
   function updateDronePosition(node_id, sysid, lat, lon, heading, color_str) {{
     var key = node_id + "_" + sysid;
+    if (heading !== null && heading !== undefined) {{
+      droneHeadings[key] = heading;
+    }}
     if (!trackerDrones[key]) {{
       var droneSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="16" fill="none" stroke="${{color_str}}" stroke-width="1.5"/>
@@ -1188,10 +1247,11 @@ class SatelliteMapWidget(QWidget):
         js = f"updateDronePosition({node_id}, {sysid}, {lat}, {lon}, {hdg}, '{color}');"
         self._web_view.page().runJavaScript(js)
         
-        # Update video overlay position if this drone has an active footprint with video
+        # Update video overlay position and heading if this drone has an active footprint with video
         target_id = f"{node_id}:{sysid}"
         if self._active_fp_target == target_id:
-            js = f"updateFootprintVideoPosition({node_id}, {sysid}, {lat}, {lon});"
+            hdg_val = heading if heading is not None else "null"
+            js = f"updateFootprintVideoPosition({node_id}, {sysid}, {lat}, {lon}, {hdg_val});"
             self._web_view.page().runJavaScript(js)
 
     def remove_drone(self, node_id, sysid):
@@ -1340,6 +1400,22 @@ class SatelliteMapWidget(QWidget):
         display = "block" if show else "none"
         js = f"document.getElementById('footprint-toggle-btn').style.display = '{display}';"
         self._web_view.page().runJavaScript(js)
+
+    def add_ai_target_marker(self, lat, lon, label="ISR TARGET"):
+        """Drop an AI geolocation pin on the map.
+        
+        Parameters:
+            lat: Target latitude
+            lon: Target longitude
+            label: Short descriptive label shown above the marker
+        """
+        safe_label = str(label).replace("'", "\\'").replace('"', '\\"')
+        js = f"addAITargetMarker({lat}, {lon}, '{safe_label}');"
+        self._web_view.page().runJavaScript(js)
+
+    def clear_ai_target_markers(self):
+        """Remove all AI geolocation pins from the map."""
+        self._web_view.page().runJavaScript("clearAITargetMarkers();")
 
     def cleanup(self):
         if self._tile_server: self._tile_server.stop()

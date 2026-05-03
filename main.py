@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 from ui.main_window import GCSMainWindow
 from video.video_thread import VideoThread
 from telemetry.mavlink_thread import TelemetryThread
-from PySide6.QtCore import QTimer, QObject, Signal
+from PySide6.QtCore import QTimer, QObject, Signal, QFileSystemWatcher
 from gimbal.mount_tracker import MountTrackerController, MountTrackerConfig
 from core.fleet_brain_observer import FleetBrainObserver
 from core.camera_footprint_manager import CameraFootprintManager, CameraFootprintConfig
@@ -94,12 +94,18 @@ def main():
         window.tab_ops.map_widget,
         config=footprint_config
     )
-    # Connect footprint manager signals to map widget
+    # Connect footprint manager signals to map widget and 3D globe
     window.footprint_manager.footprint_updated.connect(
         window.tab_ops.map_widget.add_footprint
     )
+    window.footprint_manager.footprint_updated.connect(
+        window.tab_ops.cesium_widget.add_footprint
+    )
     window.footprint_manager.footprint_cleared.connect(
         window.tab_ops.map_widget.clear_footprint
+    )
+    window.footprint_manager.footprint_cleared.connect(
+        window.tab_ops.cesium_widget.clear_footprint
     )
 
     # ---- GLOBAL NODE MANAGER ----
@@ -174,6 +180,10 @@ def main():
         sync_mission_drone_list()
 
     def r_hud_updated(n_id, s_id, speed, batt, alt, mode):
+        # 🚀 Fleet Routing: Always update the swarm sensor panel for all drones
+        window.tab_ops.sensor_panel.update_basic(n_id, s_id, mode=mode, alt=alt if alt > -1 else None, batt=batt if batt > -1 else None)
+        window.tab_ops.sensor_panel.update_sensors(n_id, s_id, airspeed=speed if speed > -1 else None, gps_active=window.tab_ops.chk_gps_enabled.isChecked())
+        
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
             # Clean mode display with persistence guard 🛰️
@@ -181,9 +191,6 @@ def main():
                 window.tab_ops.map_hud.update_telemetry(speed=speed if speed > -1 else None, batt=batt if batt > -1 else None, alt=alt if alt > -1 else None, mode=mode)
             else:
                 window.tab_ops.map_hud.update_telemetry(speed=speed if speed > -1 else None, batt=batt if batt > -1 else None, alt=alt if alt > -1 else None)
-            
-            # Sync to Sensor Side-Panel 🛰️
-            window.tab_ops.sensor_panel.update_sensors(airspeed=speed if speed > -1 else None, gps_active=window.tab_ops.chk_gps_enabled.isChecked())
             
             # Sync the top-bar dropdown if the mode changed (Clean name only) 🛰️
             if mode and mode != "UNKNOWN":
@@ -193,24 +200,16 @@ def main():
                     window.combo_mode.blockSignals(False)
 
     def r_distance_updated(n_id, s_id, dist_m):
-        an, as_id = get_active_target()
-        if n_id == an and s_id == as_id:
-            window.tab_ops.sensor_panel.update_sensors(lidar_alt=dist_m)
+        pass # Optional: Route to fleet panel if Lidar is added back later
 
     def r_gps2_updated(n_id, s_id, fix, hdop):
-        an, as_id = get_active_target()
-        if n_id == an and s_id == as_id:
-            window.tab_ops.sensor_panel.update_trn(fix_type=fix, hdop=hdop)
+        window.tab_ops.sensor_panel.update_trn(n_id, s_id, fix_type=fix, hdop=hdop)
 
     def r_ekf_status_updated(n_id, s_id, flags):
-        an, as_id = get_active_target()
-        if n_id == an and s_id == as_id:
-            window.tab_ops.sensor_panel.update_trn(ekf_flags=flags)
+        window.tab_ops.sensor_panel.update_trn(n_id, s_id, ekf_flags=flags)
 
     def r_nav_updated(n_id, s_id, wp_dist):
-        an, as_id = get_active_target()
-        if n_id == an and s_id == as_id:
-            window.tab_ops.sensor_panel.update_nav(wp_dist=wp_dist)
+        window.tab_ops.sensor_panel.update_nav(n_id, s_id, wp_dist=wp_dist)
 
     def r_attitude_updated(n_id, s_id, roll, pitch, yaw):
         window.drone_headings[f"{n_id}:{s_id}"] = yaw
@@ -220,19 +219,32 @@ def main():
         # Feed attitude to footprint manager 📍
         window.footprint_manager.update_attitude(n_id, s_id, roll, pitch, yaw)
 
+    _pos_throttle = {} # Per-drone timestamp for map update throttling
+
     def r_position_updated(n_id, s_id, lat, lon, alt):
         if lat is None or lon is None or not math.isfinite(lat) or not math.isfinite(lon) or abs(lat) > 90.0 or abs(lon) > 180.0:
             return
         # Feed position to footprint manager 📍
         window.footprint_manager.update_position(n_id, s_id, lat, lon, alt if alt is not None else 0.0)
+        
+        # Throttle map JS updates to max 4Hz per drone to prevent WebView overload 🏎️
+        key = f"{n_id}:{s_id}"
+        now = time.time()
+        if now - _pos_throttle.get(key, 0) < 0.25:
+            return
+        _pos_throttle[key] = now
+        
         color = window.telemetry_nodes[n_id].color if n_id in window.telemetry_nodes else "#ffffff"
-        heading = window.drone_headings.get(f"{n_id}:{s_id}", 0.0)
+        heading = window.drone_headings.get(key, 0.0)
         window.tab_ops.map_widget.update_drone_position(n_id, s_id, lat, lon, heading, color)
+        # Also push to 3D globe 🌐
+        window.tab_ops.cesium_widget.update_drone_position(n_id, s_id, lat, lon, alt, heading, color)
         an, as_id = get_active_target()
         if n_id == an and s_id == as_id:
             window.tab_ops.update_position(lat, lon, alt)
-            # Sync to Sensor Side-Panel 🛰️
-            window.tab_ops.sensor_panel.update_sensors(gps_active=window.tab_ops.chk_gps_enabled.isChecked())
+            
+        # 🚀 Fleet Routing: Sync to swarm sensor panel
+        window.tab_ops.sensor_panel.update_sensors(n_id, s_id, gps_active=window.tab_ops.chk_gps_enabled.isChecked())
 
     def r_status_text(n_id, s_id, txt):
         an, as_id = get_active_target()
@@ -575,9 +587,12 @@ def main():
             window.video_thread.tracking_error.connect(on_tracking_error)
             window.video_thread.ai_ready.connect(on_ai_ready)
             # Connect footprint frame signal to map widget for video overlay 📍🎥
-            window.video_thread.footprint_frame_ready.connect(
-                lambda nid, quality, jpeg_bytes: window.tab_ops.map_widget.update_footprint_video_bytes(nid, jpeg_bytes)
-            )
+            def route_video_overlay(nid, quality, jpeg_bytes):
+                window.tab_ops.map_widget.update_footprint_video_bytes(nid, jpeg_bytes)
+                window.tab_ops.cesium_widget.update_footprint_video_bytes(nid, jpeg_bytes)
+            
+            window.video_thread.footprint_frame_ready.connect(route_video_overlay)
+            
             # Apply any AI engine/model preset from Video tab at startup
             eng = window.tab_video.combo_ai_engine.currentText().split()[0]
             mdl = window.tab_video.model_combo.currentText().split()[0]
@@ -585,7 +600,7 @@ def main():
             window.video_thread.set_world_prompt(window.tab_video.txt_search_prompt.text())
             # Relocated to OpsTab 🛰️
             window.video_thread.set_ai_conf(window.tab_ops.slider_conf.value() / 100.0)
-            window.video_thread.ai_diag_updated.connect(window.tab_ops.sensor_panel.update_ai_diagnostics)
+            # NOTE: ai_diag_updated is shown on the status bar; SensorPanel now shows per-drone fleet data
             window.video_thread.start()
             window.video_thread.set_show_detections(window.tab_ops.chk_enable_det.isChecked())
             window.video_thread.set_show_labels(window.tab_video.chk_show_labels.isChecked())
@@ -712,6 +727,8 @@ def main():
             window.tab_ops.refresh_class_filters(model_name)
         except: pass
 
+
+
     def on_ai_settings_applied(engine, model_name):
         global current_ai_engine, current_ai_model
         
@@ -762,6 +779,10 @@ def main():
     window.tab_ops.combo_tracking_mode.currentIndexChanged.connect(on_tracking_mode_changed)
     window.tab_ops.chk_tracking.toggled.connect(on_tracking_toggled)
     window.tab_ops.btn_wipe_lock.clicked.connect(on_wipe_lock)
+    window.tab_ops.btn_clear_isr.clicked.connect(lambda: [
+        window.tab_ops.map_widget.clear_ai_target_markers(),
+        window.tab_ops.cesium_widget._web.page().runJavaScript("if(typeof clearAITargetMarkers!=='undefined')clearAITargetMarkers();"),
+    ])
     window.tab_ops.chk_show_logs.toggled.connect(window.log_console.setVisible)
     window.tab_video.ai_settings_applied.connect(on_ai_settings_applied)
     # Tactical HUD Connects 🛰️
@@ -898,9 +919,11 @@ def main():
             # Track active footprint target for video overlay routing
             if new_state == "ON":
                 map_widget._active_fp_target = target_id
+                window.tab_ops.cesium_widget._active_fp_target = target_id
                 print(f"[Python] Set _active_fp_target = {target_id}")
             elif map_widget._active_fp_target == target_id:
                 map_widget._active_fp_target = None
+                window.tab_ops.cesium_widget._active_fp_target = None
                 print(f"[Python] Cleared _active_fp_target (was {target_id})")
         
         # Now toggle the per-drone footprint state in Python (emits signals that will render)
@@ -947,6 +970,264 @@ def main():
     
     # Camera Footprint toggle from map context menu
     window.tab_ops.map_widget.footprint_toggle_requested.connect(on_footprint_toggle_from_map)
+    window.tab_ops.cesium_widget.footprint_toggle_requested.connect(on_footprint_toggle_from_map)
+    # 3D view drone popup actions
+    window.tab_ops.cesium_widget.takeoff_requested.connect(on_takeoff)
+    window.tab_ops.cesium_widget.start_mission_requested.connect(on_start_mission)
+
+    # ---- TACTICAL LLM INTEGRATION ----
+    from core.llm_client import TacticalLLMClient
+    llm_client = TacticalLLMClient()
+
+    def handle_llm_response(response_json):
+        import json
+        reasoning = response_json.get("reasoning", "")
+        if reasoning:
+            window.tab_ops.ai_panel.append_chat(f"<b>[AI]</b> {reasoning}", "#33ff55")
+            
+        formatted_str = json.dumps(response_json, indent=2)
+        window.tab_ops.ai_panel.show_preview(formatted_str)
+        
+        commands = response_json.get("commands", [])
+        if not commands:
+            # If reasoning was returned with no commands, it's a valid analysis response (e.g. /identify)
+            if reasoning:
+                window.tab_ops.ai_panel.append_chat("<i>[System] ✅ ISR Analysis complete.</i>", "#00ff78")
+            else:
+                window.tab_ops.ai_panel.append_chat("<i>[System] No actionable commands extracted from response.</i>", "#ffaa00")
+            window.tab_ops.ai_panel.unlock_input()
+            return
+
+        for cmd in commands:
+            action = cmd.get("action")
+            target_id = cmd.get("target_id", "1:1")
+            nid, sid = parse_target(target_id)
+            tel = window.telemetry_nodes.get(nid)
+            
+            if not tel and action != "locate":
+                window.tab_ops.ai_panel.append_chat(f"<b>[SYSTEM]</b> Cannot execute {action}: Node {nid} offline.", "#ff3366")
+                continue
+                
+            if action == "takeoff":
+                alt = float(cmd.get("altitude", 50.0))
+                tel.arm(sid, True)
+                time.sleep(0.1)
+                tel.send_takeoff(sid, alt)
+                window.lbl_status.setText(f"AI: Initiating Takeoff ({alt}m) for Drone {sid}")
+                
+            elif action == "auto":
+                tel.start_mission(sid)
+                window.lbl_status.setText(f"AI: Starting Mission for Drone {sid}")
+                
+            elif action == "mission":
+                wps = cmd.get("waypoints", [])
+                tel.upload_mission(sid, wps)
+                window.lbl_status.setText(f"AI: Uploading {len(wps)} points to Drone {sid}")
+            
+            elif action == "rtl":
+                tel.set_flight_mode(sid, "RTL")
+                window.lbl_status.setText(f"AI: RTL initiated for Drone {sid}")
+
+            elif action == "land":
+                tel.set_flight_mode(sid, "LAND")
+                window.lbl_status.setText(f"AI: Landing initiated for Drone {sid}")
+
+            elif action == "locate":
+                x_pct = float(cmd.get("x_pct", 0.5))
+                y_pct = float(cmd.get("y_pct", 0.5))
+                
+                # Try the LLM's suggested target first, then fall back to any available drone
+                result = window.footprint_manager.calculate_target_coordinate(nid, sid, x_pct, y_pct)
+                
+                if result is None:
+                    # Footprint manager had no position for the suggested target — try all drones
+                    all_positions = window.footprint_manager._position
+                    if all_positions:
+                        fallback_nid, fallback_sid = next(iter(all_positions))
+                        result = window.footprint_manager.calculate_target_coordinate(
+                            fallback_nid, fallback_sid, x_pct, y_pct
+                        )
+                        if result:
+                            window.tab_ops.ai_panel.append_chat(
+                                f"<i>[System] Using Drone {fallback_nid}:{fallback_sid} telemetry for geolocation.</i>",
+                                "#92b0c3"
+                            )
+                    else:
+                        window.tab_ops.ai_panel.append_chat(
+                            "<b>[GEOLOCATION]</b> ⚠️ No drone GPS/telemetry available. "
+                            "Connect a MAVLink drone or ensure the DJI telemetry bridge is active.",
+                            "#ffaa00"
+                        )
+
+                if result:
+                    t_lat, t_lon = result
+                    label_text = "AI TARGET"
+                    if reasoning:
+                        label_text = " ".join(reasoning.split()[:4]).upper().rstrip('.')
+                    window.tab_ops.map_widget.add_ai_target_marker(t_lat, t_lon, label_text)
+                    window.tab_ops.cesium_widget.add_target_marker(t_lat, t_lon, label_text)
+                    window.tab_ops.ai_panel.append_chat(
+                        f"<b>[GEOLOCATION]</b> Target pinned: <span style='color:#00ddff'>{t_lat:.7f}, {t_lon:.7f}</span>",
+                        "#ff3232"
+                    )
+                    window.lbl_status.setText(f"AI: Target pinned at {t_lat:.5f}, {t_lon:.5f}")
+                else:
+                    window.tab_ops.ai_panel.append_chat(
+                        "<b>[GEOLOCATION]</b> ⚠️ Geolocation failed — check drone altitude > 0 and telemetry is streaming.",
+                        "#ffaa00"
+                    )
+        
+        window.tab_ops.ai_panel.append_chat("<i>[System] Commands routed successfully.</i>", "#00ff78")
+        window.tab_ops.ai_panel.unlock_input()
+
+    def on_ai_prompt(user_text, model_name):
+        # 🛰️ Context Injection: Provide the AI with real-time fleet telemetry
+        fleet_context = ""
+        for nid, tel in window.telemetry_nodes.items():
+            for sysid, pos in tel.last_pos.items():
+                fleet_context += f"Drone {nid}:{sysid} at Lat {pos['lat']:.7f}, Lon {pos['lon']:.7f}, Alt {pos['alt']:.1f}m. "
+        
+        if not fleet_context:
+            fleet_context = "No drones currently connected."
+
+        stripped = user_text.strip().lower()
+        image_b64 = None
+
+        # ─── /identify: Describe the current frame ───────────────────────────
+        if stripped.startswith("/identify"):
+            if not window.video_thread or not window.video_thread.isRunning():
+                window.tab_ops.ai_panel.append_chat(
+                    "<i>[System] ⚠️ No active video stream. Start a video feed first.</i>", "#ffaa00"
+                )
+                window.tab_ops.ai_panel.unlock_input()
+                return
+            try:
+                frame_b64, fw, fh = window.video_thread.get_current_frame_b64()
+                if not frame_b64:
+                    window.tab_ops.ai_panel.append_chat(
+                        "<i>[System] ⚠️ Video is running but no frame was captured yet. Try again.</i>", "#ffaa00"
+                    )
+                    window.tab_ops.ai_panel.unlock_input()
+                    return
+                window.tab_ops.ai_panel.append_chat(
+                    f"<i>[System] 📸 Frame captured ({fw}×{fh}) — analysing scene...</i>", "#00ddff"
+                )
+                identify_prompt = (
+                    "You are a tactical ISR (Intelligence, Surveillance, Reconnaissance) analyst. "
+                    "Carefully examine the image from a drone camera and write a concise scene report. "
+                    "Describe: all visible objects, terrain, vehicles, structures, and people. "
+                    "Note approximate counts, positions, and anything tactically significant. "
+                    "Respond ONLY with a JSON object in this exact format:\n"
+                    "{\n"
+                    '  "reasoning": "Your full scene description here.",\n'
+                    '  "commands": []\n'
+                    "}"
+                )
+                current_url = window.tab_video.txt_llm_url.text().strip()
+                llm_client.send_prompt(identify_prompt, model_name, url=current_url, image_b64=frame_b64)
+            except Exception as e:
+                window.tab_ops.ai_panel.append_chat(f"<i>[System] Frame capture failed: {e}</i>", "#ff3366")
+                window.tab_ops.ai_panel.unlock_input()
+            return  # Response handled by handle_llm_response via signal
+
+        # ─── /locate: Geolocate a specific target ────────────────────────────
+        is_locate = stripped.startswith("/locate")
+        if is_locate:
+            if not window.video_thread or not window.video_thread.isRunning():
+                window.tab_ops.ai_panel.append_chat(
+                    "<i>[System] ⚠️ No active video stream. Start a video feed first.</i>", "#ffaa00"
+                )
+                window.tab_ops.ai_panel.unlock_input()
+                return
+            try:
+                frame_b64, fw, fh = window.video_thread.get_current_frame_b64()
+                if frame_b64:
+                    image_b64 = frame_b64
+                    window.tab_ops.ai_panel.append_chat(
+                        f"<i>[System] 📸 Frame captured ({fw}×{fh}) — sending to Vision AI...</i>", "#00ddff"
+                    )
+                else:
+                    window.tab_ops.ai_panel.append_chat(
+                        "<i>[System] ⚠️ Video is running but no frame was captured yet. Try again.</i>", "#ffaa00"
+                    )
+            except Exception as e:
+                window.tab_ops.ai_panel.append_chat(f"<i>[System] Frame capture failed: {e}</i>", "#ff3366")
+
+        # Strip the command prefix for a cleaner target description
+        if is_locate:
+            target_desc = user_text[7:].strip()
+        else:
+            target_desc = user_text
+
+        contextual_prompt = (
+            f"OPERATOR REQUEST: {target_desc}\n\nCURRENT FLEET STATUS:\n{fleet_context}"
+        )
+        
+        current_url = window.tab_video.txt_llm_url.text().strip()
+        llm_client.send_prompt(contextual_prompt, model_name, url=current_url, image_b64=image_b64)
+
+    def on_llm_refresh():
+        current_url = window.tab_video.txt_llm_url.text().strip()
+        llm_client.fetch_models(url=current_url)
+
+    window.tab_ops.ai_panel.prompt_submitted.connect(on_ai_prompt)
+    window.tab_ops.ai_panel.models_refresh_requested.connect(lambda _: on_llm_refresh())
+    window.tab_video.btn_llm_save.clicked.connect(on_llm_refresh)
+    llm_client.models_updated.connect(window.tab_ops.ai_panel.update_models)
+    llm_client.response_received.connect(handle_llm_response)
+    llm_client.error_received.connect(lambda e: (window.tab_ops.ai_panel.append_chat(f"<b>[SYSTEM ERROR]</b> {e}", "#ff3366"), window.tab_ops.ai_panel.unlock_input()))
+
+    # --- TACTICAL REMOTE BRIDGE ---
+    # This allows the AI agent to "type" into the GCS for live testing.
+    remote_cmd_path = os.path.join(os.getcwd(), "remote_pilot.cmd")
+    # Ensure file exists
+    if not os.path.exists(remote_cmd_path):
+        with open(remote_cmd_path, "w") as f: f.write("")
+    
+    def check_remote_bridge():
+        try:
+            if os.path.exists(remote_cmd_path) and os.path.getsize(remote_cmd_path) > 0:
+                with open(remote_cmd_path, "r") as f:
+                    cmd_text = f.read().strip()
+                if cmd_text:
+                    print(f"[REMOTE BRIDGE] Executing: {cmd_text}")
+                    # Clear the file
+                    with open(remote_cmd_path, "w") as f: f.write("")
+                    # Inject into the UI
+                    window.tab_ops.ai_panel.input_field.setText(cmd_text)
+                    window.tab_ops.ai_panel.submit_prompt()
+        except Exception as e:
+            print(f"[REMOTE BRIDGE] Error: {e}")
+
+    window.bridge_timer = QTimer()
+    window.bridge_timer.timeout.connect(check_remote_bridge)
+    window.bridge_timer.start(500) # Poll every 0.5s 🛰️
+    # -----------------------------
+    
+    # Auto-fetch models on startup
+    llm_client.fetch_models()
+    
+    # --- AUTO-CONNECT SITL FOR DEMO ---
+    def auto_connect_sim():
+        print("[AUTO-CONNECT] Detecting SITL simulation...")
+        nid = 1
+        color = node_colors[0]
+        # Connect to the default Alpha Squad port 14550
+        tel = TelemetryThread(nid, color, connection_string="udpin:0.0.0.0:14550")
+        window.telemetry_nodes[nid] = tel
+        connect_telemetry_signals(tel)
+        tel.start()
+        window.lbl_status.setText(f"MAVLink: Auto-Connecting SITL (14550)")
+        window.lbl_status.setStyleSheet("color: #00ddff; font-weight: bold;")
+    
+    def run_auto_connect():
+        if window.tab_video.chk_auto_connect.isChecked():
+            auto_connect_sim()
+        else:
+            print("[AUTO-CONNECT] SITL Link Disabled in Settings.")
+
+    QTimer.singleShot(2000, run_auto_connect)
+    # ---------------------------------
 
     # Log redirection handled via LogSignaler above
     window.tab_cfg.metadata.fetch_latest()

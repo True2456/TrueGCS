@@ -259,6 +259,42 @@ class VideoThread(QThread):
         """Enable or disable footprint frame export."""
         self._footprint_enabled = bool(enabled)
 
+    def get_current_frame_b64(self):
+        """Returns the current video frame as a base64 encoded JPEG string, along with dimensions."""
+        if not getattr(self, 'capture_daemon', None):
+            return None, None, None
+            
+        has_frame, frame_data = self.capture_daemon.read()
+        if not has_frame or frame_data is None:
+            return None, None, None
+            
+        frame, ts = frame_data
+        if frame is None:
+            return None, None, None
+            
+        import base64
+        import cv2
+        height, width = frame.shape[:2]
+        
+        # Downscale to max 1280px on longest side — dramatically reduces
+        # base64 payload size and VLM inference time without losing detail
+        max_dim = 1280
+        if max(width, height) > max_dim:
+            scale = max_dim / max(width, height)
+            new_w = int(width * scale)
+            new_h = int(height * scale)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            width, height = new_w, new_h
+        
+        # Encode to JPEG
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+        result, encimg = cv2.imencode('.jpg', frame, encode_param)
+        if not result:
+            return None, None, None
+            
+        b64_str = base64.b64encode(encimg).decode('utf-8')
+        return b64_str, width, height
+
     def set_click_marker(self, x: int | None, y: int | None, ttl_s: float = 1.5) -> None:
         """Show a temporary cross at (x,y) in the *source frame* coordinates."""
         if x is None or y is None:
@@ -920,13 +956,13 @@ class VideoThread(QThread):
                 # 4.5. Export frame for footprint video overlay (throttled to ~5fps, quality 60)
                 if getattr(self, "_footprint_enabled", False):
                     now = time.time()
-                    fp_interval = 0.2  # 5 fps for footprint overlay
+                    fp_interval = 0.1  # 10 fps for footprint overlay
                     if now - getattr(self, '_last_fp_ts', 0) >= fp_interval:
                         self._last_fp_ts = now
                         try:
-                            # Compress to JPEG at 60% quality for footprint display
-                            _, fp_buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                            self.footprint_frame_ready.emit("main", 60, fp_buffer.tobytes())
+                            # Compress to JPEG at 80% quality for clearer footprint display
+                            _, fp_buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                            self.footprint_frame_ready.emit("main", 80, fp_buffer.tobytes())
                         except Exception as e:
                             print(f"VideoThread Footprint Export Error: {e}")
 

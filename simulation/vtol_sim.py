@@ -48,9 +48,9 @@ class TailsitterSim:
         
         self.lock = threading.Lock()
         self.mode_map = {
-            "STABILIZE": 0, "CIRCLE": 1, "FBWA": 5, "AUTO": 10, "RTL": 11,
+            "STABILIZE": 0, "CIRCLE": 1, "FBWA": 5, "GUIDED": 15, "AUTO": 10, "RTL": 11,
             "LOITER": 12, "TAKEOFF": 13, "TRANSITION": 14, "QSTABILIZE": 17,
-            "QHOVER": 18, "QLOITER": 19, "QLAND": 20, "QRTL": 21
+            "QHOVER": 18, "QLOITER": 19, "QLAND": 20, "QRTL": 21, "QGUIDED": 25
         }
         self.target_lat = self.lat
         self.target_lon = self.lon
@@ -133,11 +133,12 @@ class TailsitterSim:
         if self.mode == "AUTO":
             target_alt = self.drone_cfg["transition_alt_m"]
             
+            # Skip vertical climb if already above transition altitude (e.g. entered AUTO mid-flight)
             if self.alt >= target_alt:
                 self.is_transitioned = True
 
             if not self.is_transitioned:
-                # 1. Vertical Climb Mode
+                # 1. Vertical Climb Mode (only if below transition alt)
                 if self.vz == 0: print(f"[PHYSICS] Mode: {self.mode} | Action: Vertical Takeoff to {target_alt}m", flush=True)
                 self.vz = self.drone_cfg["climb_rate_ms"]
                 self.pitch = 0.0 # Standard Level Climb
@@ -373,11 +374,12 @@ class TailsitterSim:
                     self.pitch = 0.0 # Return to cruise pitch
                     print(f"Mission SITL: Transition complete ({current_speed:.1f} m/s). Entering Orbitring.", flush=True)
             
-            elif self.mode in ["QLOITER", "QRTL", "QSTABILIZE"]:
+            elif self.mode in ["QLOITER", "QRTL", "QSTABILIZE", "QGUIDED", "GUIDED"]:
                 self.vx = 0.0
                 self.vy = 0.0
                 self.pitch = 0.0
-                if self.alt < 20: self.alt += 2.0 * dt
+                # If we are in QGUIDED/GUIDED and low, we should still climb to a safe alt
+                if self.alt < 30: self.alt += 2.0 * dt
             
             # Update lat/lon
             self.lat += (self.vy * dt) / 111111.0

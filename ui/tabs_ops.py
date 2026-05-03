@@ -1,9 +1,11 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGridLayout, QLabel, QComboBox, QPushButton, QCheckBox, QLineEdit, QSplitter, QSizePolicy, QSlider
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QGridLayout, QLabel, QComboBox, QPushButton, QCheckBox, QLineEdit, QSplitter, QSizePolicy, QSlider, QStackedWidget
 from PySide6.QtCore import Qt, Signal
 
 from ui.map_widget import SatelliteMapWidget
 from ui.hud_overlay import MapHUD, VideoHUD, SensorPanel
+from ui.tabs_ai import AIPanel
+from ui.cesium_widget import CesiumWidget
 
 
 class ClickableVideoLabel(QLabel):
@@ -55,7 +57,9 @@ class OpsTab(QWidget):
         self.map_hud = None
         self.sensor_panel = None
         self.video_hud = None
+        self.ai_panel = None
         self._last_yaw = 0.0
+        self.cesium_widget = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -254,38 +258,168 @@ class OpsTab(QWidget):
         map_grid = QGridLayout(map_container)
         map_grid.setContentsMargins(5, 0, 0, 0)
         
+        # Map stack: index 0 = 2D Leaflet, index 1 = 3D Cesium
+        self.map_stack = QStackedWidget()
         self.map_widget = SatelliteMapWidget()
+        self.cesium_widget = CesiumWidget()
+        self.map_stack.addWidget(self.map_widget)   # index 0
+        self.map_stack.addWidget(self.cesium_widget) # index 1
         self.map_hud = MapHUD()
         self.sensor_panel = SensorPanel()
         self.sensor_panel.setVisible(False)
         
-        map_grid.addWidget(self.map_widget, 0, 0)
+        map_grid.addWidget(self.map_stack, 0, 0)
         map_grid.addWidget(self.map_hud, 0, 0)
         
         # Sensor Panel Alignment (Right Side)
-        map_grid.addWidget(self.sensor_panel, 0, 0, Qt.AlignRight | Qt.AlignTop)
+        sensor_lay = QVBoxLayout()
+        sensor_lay.setContentsMargins(0, 150, 0, 0) # 150px top to sit well below the two toggle buttons
+        sensor_lay.addWidget(self.sensor_panel)
+        # Use only Qt.AlignRight so it stretches vertically to the bottom, allowing QScrollArea to expand
+        map_grid.addLayout(sensor_lay, 0, 0, Qt.AlignRight)
+
         
-        # Sensor Toggle Button (Floating on Map)
-        self.btn_toggle_sensors = QPushButton("SENSORS")
-        self.btn_toggle_sensors.setCheckable(True)
-        self.btn_toggle_sensors.setFixedSize(70, 24)
-        self.btn_toggle_sensors.setStyleSheet("""
+        # Tactical AI Chat Panel (Right Side Floating)
+        self.ai_panel = AIPanel()
+        self.ai_panel.setVisible(False)
+        
+        # 🚀 Fix: Use a layout directly without an invisible QWidget container to prevent blocking clicks underneath
+        panel_lay = QVBoxLayout()
+        panel_lay.setContentsMargins(0, 150, 10, 0) # 150px top to sit well below toggle buttons
+        panel_lay.addWidget(self.ai_panel)
+        
+        # Add the layout directly to the grid
+        map_grid.addLayout(panel_lay, 0, 0, Qt.AlignRight | Qt.AlignTop)
+        
+        # Tactical AI Toggle Button
+        self.btn_toggle_ai = QPushButton("TACTICAL AI")
+        self.btn_toggle_ai.setCheckable(True)
+        self.btn_toggle_ai.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_ai.setStyleSheet("""
             QPushButton {
-                background-color: rgba(9, 14, 17, 0.8);
-                color: #92b0c3;
-                border: 1px solid rgba(0, 221, 255, 0.3);
-                font-size: 9px;
+                background-color: rgba(9, 21, 28, 0.94);
+                color: #00ddff;
+                border: 1px solid #00ddff;
+                padding: 8px 18px; 
+                border-radius: 6px; 
+                font-size: 12px;
                 font-weight: bold;
-                border-radius: 4px;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background-color: #00ddff;
+                color: #000000;
             }
             QPushButton:checked {
                 background-color: #00ddff;
-                color: #090e11;
                 border: 1px solid #00ddff;
+                color: #090e11;
             }
         """)
-        self.btn_toggle_sensors.toggled.connect(self.sensor_panel.setVisible)
-        map_grid.addWidget(self.btn_toggle_sensors, 0, 0, Qt.AlignRight | Qt.AlignBottom)
+        
+        def on_ai_toggled(checked):
+            self.ai_panel.setVisible(checked)
+            self.btn_toggle_ai.setText("CLOSE TACTICAL AI" if checked else "TACTICAL AI")
+            
+        self.btn_toggle_ai.toggled.connect(on_ai_toggled)
+        self.ai_panel.close_requested.connect(lambda: self.btn_toggle_ai.setChecked(False))
+        
+        # Fleet Sensors Toggle Button
+        self.btn_toggle_sensors = QPushButton("FLEET SENSORS")
+        self.btn_toggle_sensors.setCheckable(True)
+        self.btn_toggle_sensors.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_sensors.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(9, 21, 28, 0.94);
+                color: #00ddff;
+                border: 1px solid #00ddff;
+                padding: 8px 18px; 
+                border-radius: 6px; 
+                font-size: 12px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background-color: #00ddff;
+                color: #000000;
+            }
+            QPushButton:checked {
+                background-color: #00ddff;
+                border: 1px solid #00ddff;
+                color: #090e11;
+            }
+        """)
+        
+        def on_sensors_toggled(checked):
+            self.sensor_panel.setVisible(checked)
+            self.btn_toggle_sensors.setText("CLOSE FLEET SENSORS" if checked else "FLEET SENSORS")
+            
+        self.btn_toggle_sensors.toggled.connect(on_sensors_toggled)
+        self.sensor_panel.close_requested.connect(lambda: self.btn_toggle_sensors.setChecked(False))
+        
+        # 3D View Toggle Button
+        _btn_style = """
+            QPushButton {
+                background-color: rgba(9, 21, 28, 0.94);
+                color: #00ddff;
+                border: 1px solid #00ddff;
+                padding: 8px 18px; 
+                border-radius: 6px; 
+                font-size: 12px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background-color: #00ddff;
+                color: #000000;
+            }
+            QPushButton:checked {
+                background-color: #00ddff;
+                border: 1px solid #00ddff;
+                color: #090e11;
+            }
+        """
+
+        self.btn_toggle_3d = QPushButton("3D VIEW")
+        self.btn_toggle_3d.setCheckable(True)
+        self.btn_toggle_3d.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_3d.setStyleSheet(_btn_style)
+
+        def on_3d_toggled(checked):
+            self.map_stack.setCurrentIndex(1 if checked else 0)
+            self.btn_toggle_3d.setText("2D VIEW" if checked else "3D VIEW")
+            # Hide overlapping panels that don't apply to 3D view
+            self.map_hud.setVisible(not checked)
+
+        self.btn_toggle_3d.toggled.connect(on_3d_toggled)
+
+        # Clear ISR Pins button
+        self.btn_clear_isr = QPushButton("CLEAR ISR PINS")
+        self.btn_clear_isr.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_isr.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,50,50,0.1);
+                color: #ff5050;
+                border: 1px solid rgba(255,50,50,0.4);
+                padding: 6px 12px; 
+                border-radius: 6px; 
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover { background-color: rgba(255,50,50,0.25); }
+        """)
+
+        # 🚀 Fix: Use layout directly to prevent a full-height QWidget from swallowing mouse events
+        btn_layout = QVBoxLayout()
+        btn_layout.setContentsMargins(0, 50, 10, 0) # 50px top to sit below Mission Planner
+        btn_layout.addWidget(self.btn_toggle_ai)
+        btn_layout.addWidget(self.btn_toggle_sensors) # Added right beneath AI button
+        btn_layout.addWidget(self.btn_toggle_3d)
+        btn_layout.addSpacing(4)
+        btn_layout.addWidget(self.btn_clear_isr)
+        
+        map_grid.addLayout(btn_layout, 0, 0, Qt.AlignRight | Qt.AlignTop)
         
         splitter.addWidget(map_container)
         

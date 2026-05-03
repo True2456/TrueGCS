@@ -71,6 +71,25 @@ class VideoTab(QWidget):
         
         container_layout.addWidget(ai_box)
         
+        # 1.5 Zarri Tactical AI Brain Config
+        llm_box = QGroupBox("Zarri Tactical AI Brain Config")
+        llm_grid = QGridLayout(llm_box)
+        llm_grid.addWidget(QLabel("Server URL:"), 0, 0)
+        self.txt_llm_url = QLineEdit("http://192.168.1.122:1234")
+        self.txt_llm_url.setStyleSheet("background-color: #111a22; color: #00ddff; padding: 4px; border: 1px solid #2a4555;")
+        llm_grid.addWidget(self.txt_llm_url, 0, 1)
+        
+        self.btn_llm_save = QPushButton("Apply / Refresh Models")
+        self.btn_llm_save.setStyleSheet("background-color: rgba(0, 221, 255, 0.15); color: #00ddff; border: 1px solid #00ddff; padding: 4px 8px;")
+        llm_grid.addWidget(self.btn_llm_save, 1, 0, 1, 2)
+        
+        self.chk_auto_connect = QCheckBox("Auto-Connect Local SITL (UDP 14550)")
+        self.chk_auto_connect.setChecked(False)
+        self.chk_auto_connect.setStyleSheet("color: #92b0c3; margin-top: 5px;")
+        llm_grid.addWidget(self.chk_auto_connect, 2, 0, 1, 2)
+        
+        container_layout.addWidget(llm_box)
+        
         # 2. Advanced Visual Tuning
         vid_box = QGroupBox("Visual Stream Optimization")
         vid_lay = QVBoxLayout(vid_box)

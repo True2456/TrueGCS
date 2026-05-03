@@ -63,7 +63,7 @@ class GCSMainWindow(QMainWindow):
         self.tab_cfg.lbl_status = self.lbl_status
         
         self.tabs.addTab(self.tab_ops, "Operations")
-        self.tabs.addTab(self.tab_video, "Video & Detection")
+        self.tabs.addTab(self.tab_video, "AI Settings")
         self.tabs.addTab(self.tab_cfg, "Configuration")
         self.tabs.addTab(self.tab_sim, "Simulation")
         self.tabs.addTab(self.tab_dji, "DJI Config")

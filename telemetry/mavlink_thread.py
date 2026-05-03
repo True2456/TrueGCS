@@ -49,6 +49,8 @@ class TelemetryThread(QThread):
         # Latest known mount orientation (degrees), indexed by sysid.
         # Used to align gimbal controllers so "center slew" doesn't assume 0 degrees.
         self.mount_angles = {}
+        self.last_pos = {} # sysid -> {"lat": float, "lon": float, "alt": float}
+        self._armed = {} # sysid -> bool (cached armed state from heartbeats)
         self.lock = threading.Lock()
 
     def _ensure_drone(self, sysid):
@@ -62,6 +64,7 @@ class TelemetryThread(QThread):
             self._modes_emitted[sysid] = False
             self.last_heartbeats[sysid] = time.time()
             self.mount_angles[sysid] = (0.0, 0.0)  # (pitch_deg, yaw_deg)
+            self.last_pos[sysid] = {"lat": 0.0, "lon": 0.0, "alt": 0.0}
             self.signals.drone_discovered.emit(self.node_id, sysid, self.color)
         else:
             self.last_heartbeats[sysid] = time.time()
@@ -83,8 +86,9 @@ class TelemetryThread(QThread):
 
             while self.running:
                 try:
-                    with self.lock:
-                        msg = self.master.recv_match(blocking=False)
+                    # Read without holding the lock — recv_match is thread-safe for reads
+                    # Lock is only needed for write operations (arm, takeoff, mode change)
+                    msg = self.master.recv_match(blocking=False)
                     if not msg:
                         time.sleep(0.01)
                         continue
@@ -134,6 +138,7 @@ class TelemetryThread(QThread):
                         lat = msg.lat / 1e7
                         lon = msg.lon / 1e7
                         alt = msg.relative_alt / 1000.0 # meters
+                        self.last_pos[sysid] = {"lat": lat, "lon": lon, "alt": alt}
                         self.signals.position_updated.emit(self.node_id, sysid, lat, lon, alt)
                     
                     elif msg_type == 'DISTANCE_SENSOR':
@@ -179,6 +184,7 @@ class TelemetryThread(QThread):
 
                     elif msg_type == 'HEARTBEAT':
                         is_armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                        self._armed[sysid] = bool(is_armed)
                         self.signals.heartbeat_received.emit(self.node_id, sysid, bool(is_armed))
                         
                         flight_mode = getattr(self.master, 'flightmode', "UNKNOWN")
@@ -358,9 +364,9 @@ class TelemetryThread(QThread):
             try:
                 # Explicit ArduPilot Plane/VTOL Master ID Map 🛰️
                 id_map = {
-                    "STABILIZE": 0, "CIRCLE": 1, "FBWA": 5, "AUTO": 10, "RTL": 11,
+                    "STABILIZE": 0, "CIRCLE": 1, "FBWA": 5, "GUIDED": 15, "AUTO": 10, "RTL": 11,
                     "LOITER": 12, "TAKEOFF": 13, "TRANSITION": 14, "QSTABILIZE": 17,
-                    "QHOVER": 18, "QLOITER": 19, "QLAND": 20, "QRTL": 21
+                    "QHOVER": 18, "QLOITER": 19, "QLAND": 20, "QRTL": 21, "QGUIDED": 25
                 }
                 custom_id = id_map.get(mode_name, 0)
                 
@@ -380,20 +386,41 @@ class TelemetryThread(QThread):
                 print(f"Failed to set mode: {e}")
 
     def send_takeoff(self, target_sysid, alt=50.0):
-        """Sends MAV_CMD_NAV_TAKEOFF to the drone."""
+        """Forces GUIDED mode and sends MAV_CMD_NAV_TAKEOFF to the drone.
+        Runs the sequenced commands in a background thread to avoid blocking the UI."""
         if not self.master: return
         
-        # Implicitly arm since Brain UI ARM button was removed
-        self.arm(target_sysid, True)
+        # Guard: Skip if drone is already armed (already flying or motors running)
+        if self._armed.get(target_sysid, False):
+            print(f"Telemetry [{self.node_id}]: Takeoff SKIPPED for SysID {target_sysid} — already armed/airborne.")
+            return
         
-        with self.lock:
-            self.master.target_system = target_sysid
-            self.master.mav.command_long_send(
-                self.master.target_system, self.master.target_component,
-                mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
-                0, 0, 0, 0, 0, 0, alt
-            )
-        print(f"Telemetry [{self.node_id}]: Takeoff command (Alt: {alt}m) sent to SysID {target_sysid}")
+        import threading
+        def _takeoff_sequence():
+            # 1. Detect if this is a VTOL (QuadPlane/Tailsitter) by checking current mode prefix
+            current_mode = self._last_mode.get(target_sysid, "")
+            target_mode = "GUIDED"
+            if current_mode.startswith("Q") or "QSTABILIZE" in current_mode:
+                target_mode = "QGUIDED"
+                
+            print(f"Telemetry [{self.node_id}]: Forcing {target_mode} mode for takeoff...")
+            self.set_flight_mode(target_sysid, target_mode)
+            time.sleep(0.5) # Brief delay for mode transition
+
+            # 2. Arm the drone
+            self.arm(target_sysid, True)
+            time.sleep(1.0) # Motor spool-up
+
+            with self.lock:
+                self.master.target_system = target_sysid
+                self.master.mav.command_long_send(
+                    self.master.target_system, self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
+                    0, 0, 0, 0, 0, 0, alt
+                )
+            print(f"Telemetry [{self.node_id}]: Takeoff command (Alt: {alt}m) sent to SysID {target_sysid}")
+
+        threading.Thread(target=_takeoff_sequence, daemon=True).start()
 
     def start_mission(self, target_sysid):
         """Switches drone to AUTO mode to begin mission."""

@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QPushButton, QSizePolicy
+from PySide6.QtCore import Qt, QPointF, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QTransform
 
 class HUDLabel(QFrame):
@@ -181,135 +181,224 @@ class SensorDataBlock(QWidget):
         if color:
             self.val.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold; font-family: 'Consolas';")
 
-class SensorPanel(QFrame):
-    """Tactical Slide-out Sensor & Navigation Status Panel 🛰️"""
-    def __init__(self, parent=None):
+class DroneSensorCard(QFrame):
+    """A collapsible card displaying telemetry and sensor data for a single drone in the swarm."""
+    def __init__(self, node_id, sys_id, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(180)
-        self._gps_active = True # Track state to avoid flickering 🛡️
+        self.node_id = node_id
+        self.sys_id = sys_id
+        self.is_expanded = False
+        
         self.setStyleSheet("""
             QFrame {
-                background-color: rgba(9, 14, 17, 0.9);
-                border-left: 2px solid #00ddff;
-                border-bottom-left-radius: 10px;
+                background-color: rgba(14, 22, 28, 0.9);
+                border: 1px solid rgba(0, 221, 255, 0.2);
+                border-radius: 6px;
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(4)
         
-        # Header
-        header = QLabel("TACTICAL MONITOR")
-        header.setStyleSheet("color: #00ddff; font-size: 10px; font-weight: bold; letter-spacing: 2px;")
-        layout.addWidget(header)
+        # --- HEADER (Clickable) ---
+        self.btn_header = QPushButton(f"NODE {node_id}  |  SYSID {sys_id}")
+        self.btn_header.setCursor(Qt.PointingHandCursor)
+        self.btn_header.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #00ddff;
+                font-size: 11px;
+                font-weight: bold;
+                text-align: left;
+                border: none;
+                padding: 2px;
+            }
+            QPushButton:hover { color: #ffffff; }
+        """)
+        self.btn_header.clicked.connect(self.toggle_expansion)
         
-        # Section: Avionics
-        layout.addWidget(self._create_separator())
-        self.block_alt_lidar = SensorDataBlock("Lidar (SF20)")
-        self.block_airspeed = SensorDataBlock("Airspeed")
+        # Basic Stats (Always Visible)
+        basic_lay = QHBoxLayout()
+        self.lbl_mode = QLabel("MODE: ---")
+        self.lbl_alt = QLabel("ALT: 0.0m")
+        self.lbl_batt = QLabel("BATT: 0.0V")
+        for lbl in [self.lbl_mode, self.lbl_alt, self.lbl_batt]:
+            lbl.setStyleSheet("color: #92b0c3; font-size: 9px; font-weight: bold; border: none; background: transparent;")
+            basic_lay.addWidget(lbl)
+        basic_lay.addStretch()
+        
+        main_layout.addWidget(self.btn_header)
+        main_layout.addLayout(basic_lay)
+        
+        # --- EXPANDABLE BODY ---
+        self.body_widget = QWidget()
+        self.body_widget.setStyleSheet("border: none; background: transparent;")
+        body_layout = QVBoxLayout(self.body_widget)
+        body_layout.setContentsMargins(0, 8, 0, 0)
+        body_layout.setSpacing(6)
+        
         self.block_gps_stat = SensorDataBlock("GPS Status", "ACTIVE", "#00ff78")
-        
-        layout.addWidget(self.block_alt_lidar)
-        layout.addWidget(self.block_airspeed)
-        layout.addWidget(self.block_gps_stat)
-        
-        # Section: TRN Diagnostics 🛰️
-        trn_header = QLabel("TRN / NAVIGATION")
-        trn_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
-        layout.addWidget(trn_header)
-        layout.addWidget(self._create_separator())
-        
+        self.block_airspeed = SensorDataBlock("Airspeed")
         self.block_gps2_fix = SensorDataBlock("GPS2 Fix", "---")
-        self.block_gps2_hdop = SensorDataBlock("PSR Conf", "---")
         self.block_ekf_pos = SensorDataBlock("EKF Health", "WAIT", "#ffaa00")
         self.block_wp_dist = SensorDataBlock("Target Dist", "0 m")
+        self.block_viz_lock = SensorDataBlock("Vision Lock", "SEARCHING", "#92b0c3")
         
-        layout.addWidget(self.block_gps2_fix)
-        layout.addWidget(self.block_gps2_hdop)
-        layout.addWidget(self.block_ekf_pos)
-        layout.addWidget(self.block_wp_dist)
-
-        # Section: Visual Navigation
-        vnav_header = QLabel("VISUAL LOCK")
-        vnav_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
-        layout.addWidget(vnav_header)
-        layout.addWidget(self._create_separator())
+        body_layout.addWidget(self._create_separator())
+        body_layout.addWidget(self.block_gps_stat)
+        body_layout.addWidget(self.block_airspeed)
+        body_layout.addWidget(self.block_gps2_fix)
+        body_layout.addWidget(self.block_ekf_pos)
+        body_layout.addWidget(self.block_wp_dist)
+        body_layout.addWidget(self.block_viz_lock)
         
-        self.block_viz_lock = SensorDataBlock("State", "SEARCHING", "#92b0c3")
-        self.block_viz_conf = SensorDataBlock("Confidence", "0%")
-        self.block_viz_offset = SensorDataBlock("Px Offset", "0, 0")
+        self.body_widget.setVisible(False)
+        main_layout.addWidget(self.body_widget)
         
-        layout.addWidget(self.block_viz_lock)
-        layout.addWidget(self.block_viz_conf)
-        layout.addWidget(self.block_viz_offset)
-        
-        # Section: AI Reconnaissance 🚀
-        ai_header = QLabel("AI RECONNAISSANCE")
-        ai_header.setStyleSheet("color: #92b0c3; font-size: 8px; font-weight: bold; margin-top: 5px;")
-        layout.addWidget(ai_header)
-        layout.addWidget(self._create_separator())
-        
-        self.block_ai_model = SensorDataBlock("Model", "---")
-        self.block_ai_fps_inf = SensorDataBlock("AI FPS", "0", "#00ff78")
-        self.block_ai_fps_vid = SensorDataBlock("Feed FPS", "0", "#00ddff")
-        
-        layout.addWidget(self.block_ai_model)
-        layout.addWidget(self.block_ai_fps_inf)
-        layout.addWidget(self.block_ai_fps_vid)
-        
-        layout.addStretch()
-        
-        # Footer: Active ID
-        self.lbl_active_id = QLabel("NODE: ---")
-        self.lbl_active_id.setStyleSheet("color: rgba(0, 221, 255, 0.4); font-size: 8px; font-family: 'Consolas';")
-        self.lbl_active_id.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.lbl_active_id)
-
     def _create_separator(self):
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); max-height: 1px;")
+        line.setStyleSheet("background-color: rgba(0, 221, 255, 0.1); max-height: 1px; border: none;")
         return line
-
-    def update_sensors(self, lidar_alt=None, airspeed=None, gps_active=None):
-        if lidar_alt is not None: self.block_alt_lidar.set_value(f"{lidar_alt:.2f} m")
-        if airspeed is not None: self.block_airspeed.set_value(f"{airspeed:.1f} m/s")
         
-        # Only update label if state explicitly changed OR on first init 🛡️
-        if gps_active is not None:
-             self._gps_active = gps_active
+    def toggle_expansion(self):
+        self.is_expanded = not self.is_expanded
+        self.body_widget.setVisible(self.is_expanded)
+        
+    # --- UPDATE METHODS ---
+    def update_basic(self, mode=None, alt=None, batt=None):
+        if mode is not None: self.lbl_mode.setText(f"MODE: {mode}")
+        if alt is not None: self.lbl_alt.setText(f"ALT: {alt:.1f}m")
+        if batt is not None: self.lbl_batt.setText(f"BATT: {batt:.1f}V")
 
-        status = "ACTIVE" if self._gps_active else "LOST/DENIED"
-        color = "#00ff78" if self._gps_active else "#ff3232"
-        self.block_gps_stat.set_value(status, color)
+    def update_sensors(self, airspeed=None, gps_active=None):
+        if airspeed is not None: self.block_airspeed.set_value(f"{airspeed:.1f} m/s")
+        if gps_active is not None:
+            status = "ACTIVE" if gps_active else "LOST/DENIED"
+            color = "#00ff78" if gps_active else "#ff3232"
+            self.block_gps_stat.set_value(status, color)
 
     def update_trn(self, fix_type=None, hdop=None, ekf_flags=None):
         if fix_type is not None:
             self.block_gps2_fix.set_value(f"{fix_type} (3D)" if fix_type >= 3 else f"{fix_type} (None)")
-        if hdop is not None:
-            # Map HDOP back to a readable PSR "Quality" or just show HDOP 🛰️
-            self.block_gps2_hdop.set_value(f"{hdop:.2f}")
         if ekf_flags is not None:
-            # Check Bit 3 (val 8): EKF_POS_HORIZ_ABS
-            ok = (ekf_flags & 8) != 0
+            ok = (ekf_flags & 8) != 0 # EKF_POS_HORIZ_ABS
             self.block_ekf_pos.set_value("PASS" if ok else "FAIL", "#00ff78" if ok else "#ff3232")
 
     def update_nav(self, wp_dist=None):
-        if wp_dist is not None:
-            self.block_wp_dist.set_value(f"{int(wp_dist)} m")
+        if wp_dist is not None: self.block_wp_dist.set_value(f"{int(wp_dist)} m")
 
     def update_vision(self, status, conf, off_x, off_y):
         color = "#00ff78" if status == "LOCKED" else ("#ffaa00" if status == "LOST" else "#92b0c3")
         self.block_viz_lock.set_value(status, color)
-        self.block_viz_conf.set_value(f"{int(conf*100)}%")
-        self.block_viz_offset.set_value(f"{off_x}, {off_y}")
 
-    def update_ai_diagnostics(self, model, inf_fps, vid_fps):
-        """Update the Reconnaissance AI performance blocks 🚀"""
-        self.block_ai_model.set_value(model)
-        self.block_ai_fps_inf.set_value(int(inf_fps))
-        self.block_ai_fps_vid.set_value(int(vid_fps))
 
-    def set_active_node(self, node_name):
-        self.lbl_active_id.setText(f"ACTIVE NODE: {node_name}")
+class SensorPanel(QFrame):
+    """Fleet-Aware Tactical Slide-out Sensor & Navigation Panel 🛰️"""
+    close_requested = Signal() # Emitted when user clicks the close button
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(240) # Slightly wider for the list view
+        self.cards = {} # Mapping of f"{n_id}:{s_id}" -> DroneSensorCard
+        
+        self.setObjectName("sensorPanel")
+        self.setStyleSheet("""
+            #sensorPanel {
+                background-color: rgba(9, 21, 28, 0.96);
+                border: 1px solid rgba(0, 221, 255, 0.35);
+                border-radius: 10px;
+            }
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: rgba(9, 14, 17, 0.5);
+                width: 6px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(0, 221, 255, 0.3);
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(0, 221, 255, 0.6);
+            }
+        """)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Header Area (Matching Mission Planner)
+        header_widget = QWidget()
+        header_widget.setStyleSheet("""
+            background-color: rgba(0, 221, 255, 0.1); 
+            border-bottom: 1px solid rgba(0, 221, 255, 0.2);
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        """)
+        header_lay = QHBoxLayout(header_widget)
+        header_lay.setContentsMargins(12, 12, 12, 12)
+        
+        header = QLabel("SWARM TELEMETRY")
+        header.setStyleSheet("color: #00ddff; font-size: 13px; font-weight: bold; letter-spacing: 1px; border: none; background: transparent;")
+        
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setStyleSheet("background-color: transparent; color: #ff3232; font-weight: bold; border: none; font-size: 14px; padding: 0px 5px;")
+        self.btn_close.clicked.connect(self.close_requested.emit)
+        
+        header_lay.addWidget(header)
+        header_lay.addStretch()
+        header_lay.addWidget(self.btn_close)
+        main_layout.addWidget(header_widget)
+        
+        # Scroll Area Container
+        scroll_container = QWidget()
+        scroll_container.setStyleSheet("background: transparent; border: none;")
+        scroll_container_lay = QVBoxLayout(scroll_container)
+        scroll_container_lay.setContentsMargins(8, 12, 8, 12)
+        
+        # Scroll Area for Drone Cards
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background: transparent; border: none;")
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll_layout.setSpacing(8)
+        self.scroll_layout.setAlignment(Qt.AlignTop)
+        
+        self.scroll_area.setWidget(self.scroll_content)
+        scroll_container_lay.addWidget(self.scroll_area)
+        
+        main_layout.addWidget(scroll_container)
+
+    def _get_or_create_card(self, n_id, s_id):
+        key = f"{n_id}:{s_id}"
+        if key not in self.cards:
+            card = DroneSensorCard(n_id, s_id)
+            self.cards[key] = card
+            self.scroll_layout.addWidget(card)
+        return self.cards[key]
+
+    # --- ROUTING METHODS ---
+    def update_basic(self, n_id, s_id, mode=None, alt=None, batt=None):
+        self._get_or_create_card(n_id, s_id).update_basic(mode=mode, alt=alt, batt=batt)
+
+    def update_sensors(self, n_id, s_id, airspeed=None, gps_active=None):
+        self._get_or_create_card(n_id, s_id).update_sensors(airspeed=airspeed, gps_active=gps_active)
+
+    def update_trn(self, n_id, s_id, fix_type=None, hdop=None, ekf_flags=None):
+        self._get_or_create_card(n_id, s_id).update_trn(fix_type=fix_type, hdop=hdop, ekf_flags=ekf_flags)
+
+    def update_nav(self, n_id, s_id, wp_dist=None):
+        self._get_or_create_card(n_id, s_id).update_nav(wp_dist=wp_dist)
+
+    def update_vision(self, n_id, s_id, status, conf, off_x, off_y):
+        self._get_or_create_card(n_id, s_id).update_vision(status, conf, off_x, off_y)
