@@ -213,7 +213,8 @@ class GCSMainWindow(QMainWindow):
             v_size = QSize(640, 480)
             
         pixmap = QPixmap.fromImage(img)
-        scaled = pixmap.scaled(v_size, Qt.KeepAspectRatio, Qt.FastTransformation)
+        # Use SmoothTransformation for high-quality bilinear scaling (resolves 'grainy' display) 💎
+        scaled = pixmap.scaled(v_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.tab_ops.video_label.setPixmap(scaled)
 
     def on_heartbeat(self, success):

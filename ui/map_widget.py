@@ -412,11 +412,10 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
     }} else {{
       footprintLayers[key] = L.polygon(latLngs, {{
         color: '#ffaa00',
-        weight: 2,
-        opacity: 0.9,
+        weight: 0,
+        opacity: 0,
         fillColor: '#ffaa00',
-        fillOpacity: 0.15,
-        dashArray: '4, 4',
+        fillOpacity: 0,
         className: 'footprint-polygon'
       }}).addTo(map);
 
@@ -1078,11 +1077,33 @@ def _build_map_html(local_tile_url, center_lat, center_lon, zoom):
   function startMission() {{ autoAll(); }}
 
   var trackerDrones = {{}};
+  var droneBreadcrumbs = {{}}; // {{ key: L.polyline }} 🛰️
+
   function updateDronePosition(node_id, sysid, lat, lon, heading, color_str) {{
     var key = node_id + "_" + sysid;
     if (heading !== null && heading !== undefined) {{
       droneHeadings[key] = heading;
     }}
+
+    // ── Update Breadcrumb Trail 🛰️ ──
+    if (!droneBreadcrumbs[key]) {{
+      droneBreadcrumbs[key] = L.polyline([], {{
+        color: color_str,
+        weight: 2,
+        opacity: 0.6,
+        dashArray: '5, 5',
+        interactive: false
+      }}).addTo(map);
+    }}
+    droneBreadcrumbs[key].addLatLng([lat, lon]);
+    
+    // Limit trail length to 1000 points to preserve performance 🛡️
+    var pts = droneBreadcrumbs[key].getLatLngs();
+    if (pts.length > 1000) {{
+      pts.shift();
+      droneBreadcrumbs[key].setLatLngs(pts);
+    }}
+
     if (!trackerDrones[key]) {{
       var droneSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 40 40">
           <circle cx="20" cy="20" r="16" fill="none" stroke="${{color_str}}" stroke-width="1.5"/>

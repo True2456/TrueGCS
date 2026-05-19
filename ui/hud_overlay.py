@@ -242,10 +242,12 @@ class DroneSensorCard(QFrame):
         self.block_airspeed = SensorDataBlock("Airspeed")
         self.block_gps2_fix = SensorDataBlock("GPS2 Fix", "---")
         self.block_ekf_pos = SensorDataBlock("EKF Health", "WAIT", "#ffaa00")
+        self.block_agl = SensorDataBlock("AGL Altitude", "---", "#00ddff")
         self.block_wp_dist = SensorDataBlock("Target Dist", "0 m")
         self.block_viz_lock = SensorDataBlock("Vision Lock", "SEARCHING", "#92b0c3")
         
         body_layout.addWidget(self._create_separator())
+        body_layout.addWidget(self.block_agl)
         body_layout.addWidget(self.block_gps_stat)
         body_layout.addWidget(self.block_airspeed)
         body_layout.addWidget(self.block_gps2_fix)
@@ -292,6 +294,10 @@ class DroneSensorCard(QFrame):
     def update_vision(self, status, conf, off_x, off_y):
         color = "#00ff78" if status == "LOCKED" else ("#ffaa00" if status == "LOST" else "#92b0c3")
         self.block_viz_lock.set_value(status, color)
+
+    def update_agl(self, dist_m):
+        if dist_m is not None:
+            self.block_agl.set_value(f"{dist_m:.1f} m")
 
 
 class SensorPanel(QFrame):
@@ -402,3 +408,27 @@ class SensorPanel(QFrame):
 
     def update_vision(self, n_id, s_id, status, conf, off_x, off_y):
         self._get_or_create_card(n_id, s_id).update_vision(status, conf, off_x, off_y)
+
+    def update_agl(self, n_id, s_id, dist_m):
+        self._get_or_create_card(n_id, s_id).update_agl(dist_m)
+
+    def set_active_node(self, label_text):
+        """Highlights the active drone card in the swarm list."""
+        # label_text is usually "NODE 1 (ID:1)"
+        try:
+            parts = label_text.replace("NODE ", "").replace(" (ID:", ":").replace(")", "").split(":")
+            if len(parts) == 2:
+                key = f"{parts[0]}:{parts[1]}"
+                for k, card in self.cards.items():
+                    is_active = (k == key)
+                    card.setStyleSheet(f"""
+                        QFrame {{
+                            background-color: {"rgba(0, 221, 255, 0.15)" if is_active else "rgba(14, 22, 28, 0.9)"};
+                            border: 2px solid {"#00ddff" if is_active else "rgba(0, 221, 255, 0.2)"};
+                            border-radius: 6px;
+                        }}
+                    """)
+                    if is_active and not card.is_expanded:
+                        card.toggle_expansion()
+        except Exception as e:
+            print(f"SensorPanel: Failed to set active node: {e}")

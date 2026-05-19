@@ -200,7 +200,7 @@ def main():
                     window.combo_mode.blockSignals(False)
 
     def r_distance_updated(n_id, s_id, dist_m):
-        pass # Optional: Route to fleet panel if Lidar is added back later
+        window.tab_ops.sensor_panel.update_agl(n_id, s_id, dist_m)
 
     def r_gps2_updated(n_id, s_id, fix, hdop):
         window.tab_ops.sensor_panel.update_trn(n_id, s_id, fix_type=fix, hdop=hdop)
@@ -582,7 +582,7 @@ def main():
             window.tab_ops.video_label.video_thread = window.video_thread
             window.video_thread.frame_ready.connect(window.update_video_frame)
             window.video_thread.target_status.connect(window.tab_ops.update_target_status)
-            window.video_thread.target_status.connect(lambda s, ox, oy, c: window.tab_ops.sensor_panel.update_vision(s, c, ox, oy))
+            window.video_thread.target_status.connect(lambda s, ox, oy, c: window.tab_ops.sensor_panel.update_vision(get_active_target()[0], get_active_target()[1], s, c, ox, oy))
             window.video_thread.source_frame_size.connect(window.tab_ops.video_label.set_source_frame_size)
             window.video_thread.tracking_error.connect(on_tracking_error)
             window.video_thread.ai_ready.connect(on_ai_ready)

@@ -243,12 +243,12 @@ class CesiumWidget(QWidget):
         self._web.page().runJavaScript(js)
 
     # ── Footprints & Video ───────────────────
-    def add_footprint(self, node_id, sysid, corners, area_m2):
+    def add_footprint(self, node_id, sysid, corners, area_m2, heading=0.0):
         """Add/update a camera footprint polygon on the 3D globe."""
         if not corners or len(corners) < 3 or not self._web.isVisible():
             return
         corners_str = "[" + ",".join(f"[{c[0]},{c[1]}]" for c in corners) + "]"
-        js = f"if(typeof updateFootprint!=='undefined')updateFootprint('{node_id}_{sysid}', {corners_str});"
+        js = f"if(typeof updateFootprint!=='undefined')updateFootprint('{node_id}_{sysid}', {corners_str}, {heading});"
         self._web.page().runJavaScript(js)
 
     def clear_footprint(self, node_id, sysid):
@@ -399,6 +399,7 @@ Cesium.Ion.defaultAccessToken = '{token}';
     const footprintMaterials = {{}};
     const videoCanvases = {{}};
     const activeCanvasIdx = {{}};
+    const footprintHeadings = {{}};
     
     // Set up QWebChannel connection
     new QWebChannel(qt.webChannelTransport, function(channel) {{
@@ -485,7 +486,7 @@ Cesium.Ion.defaultAccessToken = '{token}';
     }}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     // ── Footprints & Video Overlay ───────────────────────────────
-    window.updateFootprint = function(id, corners) {{
+    window.updateFootprint = function(id, corners, heading) {{
       if (!corners || corners.length < 3) {{
         window.clearFootprint(id);
         return;
@@ -518,12 +519,21 @@ Cesium.Ion.defaultAccessToken = '{token}';
           polygon: {{
             hierarchy: new Cesium.PolygonHierarchy(positions),
             material: mat,
-            classificationType: Cesium.ClassificationType.TERRAIN // Drape over 3D hills
+            classificationType: Cesium.ClassificationType.TERRAIN, // Drape over 3D hills
+            // Rotate the texture to match the drone heading (relative to North)
+            stRotation: new Cesium.CallbackProperty(() => {{
+                return Cesium.Math.toRadians(footprintHeadings[id] || 0);
+            }}, false)
           }}
         }});
       }} else {{
         footprintPolygons[id].polygon.hierarchy = new Cesium.PolygonHierarchy(positions);
+        // Explicitly update stRotation if it exists (though CallbackProperty handles it)
+        if (footprintPolygons[id].polygon.stRotation) {{
+           // stRotation is already a callback
+        }}
       }}
+      footprintHeadings[id] = heading;
     }};
 
     window.clearFootprint = function(id) {{
@@ -549,7 +559,15 @@ Cesium.Ion.defaultAccessToken = '{token}';
                 const nextIdx = activeCanvasIdx[id] === 0 ? 1 : 0;
                 const canvas = videoCanvases[id][nextIdx];
                 const ctx = canvas.getContext('2d');
+                
+                // FLIP VERTICALLY: WebGL textures expect bottom-to-top, but DOM/Canvas is top-to-bottom.
+                // This resolves the "back to front" (upside down) issue.
+                ctx.save();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.translate(0, canvas.height);
+                ctx.scale(1, -1);
                 ctx.drawImage(imgPool[idx], 0, 0, canvas.width, canvas.height);
+                ctx.restore();
                 
                 // Swap the active index. The CallbackProperty will return the new canvas 
                 // on the next render frame, forcing a smooth texture update.
@@ -593,17 +611,23 @@ Cesium.Ion.defaultAccessToken = '{token}';
       const col = Cesium.Color.fromCssColorString(color);
 
       if (drones[id]) {{
-        drones[id].position  = pos;
+        // Update SampledPosition 🛰️
+        drones[id].position.addSample(Cesium.JulianDate.now(), pos);
         drones[id].point.color = col;
         if (drones[id].polyline) {{
-          drones[id].polyline.positions =
-            [pos, Cesium.Cartesian3.fromDegrees(lon, lat, 0)];
+          drones[id].polyline.positions = new Cesium.CallbackProperty(() => {{
+            return [drones[id].position.getValue(Cesium.JulianDate.now()), Cesium.Cartesian3.fromDegrees(lon, lat, 0)];
+          }}, false);
         }}
       }} else {{
+        const positionProperty = new Cesium.SampledPositionProperty();
+        positionProperty.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+        positionProperty.addSample(Cesium.JulianDate.now(), pos);
+        
         drones[id] = viewer.entities.add({{
           id:       'drone_' + id,
           name:     label,
-          position: pos,
+          position: positionProperty,
           point: {{
             pixelSize:  14,
             color:      col,
@@ -622,8 +646,24 @@ Cesium.Ion.defaultAccessToken = '{token}';
             pixelOffset:    new Cesium.Cartesian2(0, -18),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           }},
+          // ── Tactical Breadcrumbs 🛰️ ──
+          path: {{
+            resolution: 1,
+            material: new Cesium.PolylineGlowMaterialProperty({{
+                glowPower: 0.1,
+                color: col
+            }}),
+            width: 3,
+            leadTime: 0,
+            trailTime: 60 // Keep last 60 seconds of flight history
+          }},
           polyline: {{
-            positions: [pos, Cesium.Cartesian3.fromDegrees(lon, lat, 0)],
+            positions: new Cesium.CallbackProperty(() => {{
+                const currentPos = drones[id].position.getValue(Cesium.JulianDate.now());
+                if (!currentPos) return [];
+                const carto = Cesium.Cartographic.fromCartesian(currentPos);
+                return [currentPos, Cesium.Cartesian3.fromDegrees(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude), 0)];
+            }}, false),
             width: 1,
             material: new Cesium.PolylineDashMaterialProperty({{
               color:      col.withAlpha(0.4),

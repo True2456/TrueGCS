@@ -55,7 +55,7 @@ class CameraFootprintManager(QObject):
             Args: (node_id, sysid)
     """
 
-    footprint_updated = Signal(int, int, list, float)  # node_id, sysid, corners, area_m2
+    footprint_updated = Signal(int, int, list, float, float)  # node_id, sysid, corners, area_m2, heading
     footprint_cleared = Signal(int, int)  # node_id, sysid
     enabled_changed = Signal(bool)  # enabled
     footprint_state_changed = Signal(int, int, bool)  # node_id, sysid, is_active
@@ -219,9 +219,10 @@ class CameraFootprintManager(QObject):
         if area < self._config.min_area_m2:
             print(f"[FOOTPRINT DEBUG] Area {area:.1f} < min_area_m2, skipping")
             return
-            
+        
+        _, _, yaw = self._attitude.get((node_id, sysid), (0.0, 0.0, 0.0))
         print(f"[FOOTPRINT DEBUG] Emitting footprint for {node_id}:{sysid}: corners={len(corners)}, area={area:.1f}m²")
-        self.footprint_updated.emit(node_id, sysid, corners, area)
+        self.footprint_updated.emit(node_id, sysid, corners, area, yaw)
 
     def calculate_footprint(self, node_id, sysid):
         """Calculate the camera footprint polygon corners for a drone.
@@ -430,259 +431,32 @@ class CameraFootprintManager(QObject):
         return [enu_x, enu_y, enu_z]
 
     def _compute_footprint_corners(self, lat, lon, alt, roll, pitch, yaw, gimbal_pitch_deg):
-        """Compute the four corners of the camera footprint polygon.
-
-        Uses a geometric ray-tracing model:
-        1. Build the camera's center pointing vector in ENU frame from
-           vehicle attitude and gimbal tilt
-        2. Build the four corner vectors by adding FOV offsets
-        3. Intersect each ray with the ground plane (z=0 in ENU)
-        4. Convert intersection points to lat/lon
-
-        For straight-down gimbal (-90°), uses a simplified rectangular model.
-
-        Parameters:
-            lat, lon, alt: Drone position (degrees, meters above ellipsoid)
-            roll, pitch, yaw: Vehicle attitude in degrees (ENU frame)
-            gimbal_pitch_deg: Gimbal pitch angle in degrees
-
-        Returns:
-            List of [lat, lon] pairs (corners in clockwise order) or None
-        """
-        R = self._config.earth_radius_m
-
-        # Handle straight-down gimbal case specially
-        if abs(gimbal_pitch_deg + 90.0) < 5.0:
-            return self._compute_downward_footprint(lat, lon, alt, yaw)
-
-        # Convert to radians
-        lat_rad = math.radians(lat)
-        lon_rad = math.radians(lon)
-
-        # Camera FOV half-angles
-        hfov = math.radians(self._config.hfov_deg)
-        vfov = math.radians(self._config.vfov_deg)
-
-        # Ground plane is approximately horizontal at altitude alt
-        # Camera position in local ENU frame (ENU origin = drone ground position)
-        cam_pos = [0.0, 0.0, -alt]  # alt meters above ground (z is up)
-
-        # Calculate corner rays and find ground intersections
-        corners = []
-        for sign_v in [-1, 1]:  # -1 = top, +1 = bottom
-            for sign_h in [-1, 1]:  # -1 = left, +1 = right
-                # Corner ray in ENU (relative to camera center)
-                corner_ray = self._corner_direction(
-                    roll, pitch, yaw, gimbal_pitch_deg, sign_h, sign_v
-                )
-
-                if corner_ray[2] >= 0:
-                    # This corner doesn't hit the ground (pointing above horizon)
-                    continue
-
-                t_corner = -cam_pos[2] / corner_ray[2]
-                c_east = t_corner * corner_ray[0]
-                c_north = t_corner * corner_ray[1]
-
-                # Convert to lat/lon
-                c_lat = math.degrees(lat_rad) + (c_north / R) * (180.0 / math.pi)
-                c_lon = math.degrees(lon_rad) + (c_east / (R * math.cos(math.radians(lat)))) * (180.0 / math.pi)
-
-                corners.append([c_lat, c_lon])
-
-        if len(corners) < 3:
+        """Compute the four corners using the centralized geo_math engine."""
+        from core.geo_math import calculate_footprint
+        
+        # Use the hardened projection engine that handles absolute gimbals
+        corners = calculate_footprint(
+            drone_lat=lat,
+            drone_lon=lon,
+            drone_alt=alt,
+            roll=roll,
+            pitch=pitch,
+            yaw=yaw,
+            gimbal_pitch=gimbal_pitch_deg,
+            fov_h=self._config.hfov_deg,
+            fov_v=self._config.vfov_deg
+        )
+        
+        if not corners:
             return None
-
-        # Sort corners to form a proper polygon (counter-clockwise around center)
-        center_lon = math.radians(lon)
-        center_lat = math.radians(lat)
-        corners.sort(key=lambda c: math.atan2(
-            math.radians(c[1]) - center_lon,
-            math.radians(c[0]) - center_lat
-        ))
-
-        return corners
-
-    def _compute_downward_footprint(self, lat, lon, alt, yaw_deg=0.0):
-        """Compute footprint for straight-down camera view.
-
-        Creates a rectangular footprint centred on the drone position,
-        sized based on altitude and camera FOV, and rotated by the drone's
-        heading so the footprint always faces the same direction as the drone.
-
-        Parameters:
-            lat, lon, alt: Drone position
-            yaw_deg: Drone heading in degrees (0 = North, clockwise)
-
-        Returns:
-            List of [lat, lon] pairs forming a rotated rectangle
-        """
-        R = self._config.earth_radius_m
-
-        hfov_half = math.radians(self._config.hfov_deg) / 2.0
-        vfov_half = math.radians(self._config.vfov_deg) / 2.0
-
-        # Ground distances in metres from drone centre
-        half_width_m  = alt * math.tan(hfov_half)  if alt > 0 else 50.0  # camera right
-        half_height_m = alt * math.tan(vfov_half)  if alt > 0 else 50.0  # camera forward
-
-        # Unrotated corners in camera frame (forward = top of image = +north when yaw=0)
-        # (right_m, fwd_m) pairs: top-left, top-right, bottom-right, bottom-left
-        cam_corners = [
-            (-half_width_m,  half_height_m),   # top-left
-            ( half_width_m,  half_height_m),   # top-right
-            ( half_width_m, -half_height_m),   # bottom-right
-            (-half_width_m, -half_height_m),   # bottom-left
-        ]
-
-        # Rotate each corner by yaw around the drone centre into ENU (East, North)
-        yaw_rad = math.radians(yaw_deg)
-        cos_y   = math.cos(yaw_rad)
-        sin_y   = math.sin(yaw_rad)
-        lat_rad = math.radians(lat)
-
-        corners = []
-        for cam_r, cam_f in cam_corners:
-            # cam_r is Right, cam_f is Forward
-            # Clockwise rotation into ENU (East, North)
-            east_m  =  cam_r * cos_y + cam_f * sin_y
-            north_m = -cam_r * sin_y + cam_f * cos_y
-
-            c_lat = lat  + (north_m / R) * (180.0 / math.pi)
-            c_lon = lon  + (east_m  / (R * math.cos(lat_rad))) * (180.0 / math.pi)
-            corners.append([c_lat, c_lon])
-
-        return corners
-
-    def _corner_direction(self, roll, pitch, yaw, gimbal_pitch, sign_h, sign_v):
-        """Calculate the direction vector for a camera FOV corner in ENU frame.
-
-        Parameters:
-            roll, pitch, yaw: Vehicle attitude in degrees
-            gimbal_pitch: Gimbal pitch in degrees (negative = down)
-            sign_h: -1 for left, +1 for right
-            sign_v: -1 for top, +1 for bottom
-
-        Returns:
-            Normalized direction vector [east, north, up] in ENU frame
-        """
-        hfov = math.radians(self._config.hfov_deg) / 2.0
-        vfov = math.radians(self._config.vfov_deg) / 2.0
-
-        # Camera center direction in body frame (forward along +X)
-        # Apply gimbal pitch first
-        gp_rad = math.radians(gimbal_pitch)
-        cos_gp = math.cos(gp_rad)
-        sin_gp = math.sin(gp_rad)
-
-        # Center direction after gimbal (body frame):
-        # Gimbal pitch rotates around body Y axis
-        # 0° = forward, -90° = straight down
-        center_body = [cos_gp, 0.0, -sin_gp]
-
-        # Camera up vector in body frame (after gimbal)
-        # For a forward-looking camera, up is approximately +Z in body frame
-        cam_up_body = [sin_gp, 0.0, cos_gp]
-
-        # Camera right vector (cross product of direction and up)
-        cam_right_body = [
-            center_body[1] * cam_up_body[2] - center_body[2] * cam_up_body[1],
-            center_body[2] * cam_up_body[0] - center_body[0] * cam_up_body[2],
-            center_body[0] * cam_up_body[1] - center_body[1] * cam_up_body[0]
-        ]
-
-        # Normalize right vector
-        norm_right = math.sqrt(sum(c ** 2 for c in cam_right_body))
-        if norm_right > 0:
-            cam_right_body = [c / norm_right for c in cam_right_body]
-
-        # Corner direction in body frame
-        # Combine center direction with horizontal and vertical offsets
-        tan_h = math.tan(sign_h * hfov)
-        tan_v = math.tan(sign_v * vfov)
-
-        corner_body = [
-            center_body[0] + tan_h * cam_right_body[0] + tan_v * cam_up_body[0],
-            center_body[1] + tan_h * cam_right_body[1] + tan_v * cam_up_body[1],
-            center_body[2] + tan_h * cam_right_body[2] + tan_v * cam_up_body[2]
-        ]
-
-        # Normalize
-        norm = math.sqrt(sum(c ** 2 for c in corner_body))
-        if norm == 0:
-            return [0.0, 0.0, -1.0]
-        corner_body = [c / norm for c in corner_body]
-
-        # Rotate from body frame to ENU frame
-        # Roll rotation (around X axis)
-        cos_r = math.cos(roll)
-        sin_r = math.sin(roll)
-
-        x1 = corner_body[0]
-        y1 = cos_r * corner_body[1] - sin_r * corner_body[2]
-        z1 = sin_r * corner_body[1] + cos_r * corner_body[2]
-
-        # Pitch rotation (around Y axis)
-        cos_p = math.cos(pitch)
-        sin_p = math.sin(pitch)
-
-        x2 = cos_p * x1 + sin_p * z1
-        y2 = y1
-        z2 = -sin_p * x1 + cos_p * z1
-
-        # Yaw rotation (around Z axis, clockwise from North)
-        cos_y = math.cos(yaw)
-        sin_y = math.sin(yaw)
-
-        # Body frame: x2=Forward, y2=Left, z2=Up
-        # Result in ENU: x=east, y=north, z=up
-        enu_x = x2 * sin_y - y2 * cos_y
-        enu_y = x2 * cos_y + y2 * sin_y
-        enu_z = z2
-
-        return [enu_x, enu_y, enu_z]
+            
+        # Convert tuples to lists for JSON compatibility
+        return [[c[0], c[1]] for c in corners]
 
     def calculate_footprint_area(self, corners):
-        """Calculate the approximate ground area of a footprint polygon.
-
-        Uses the planar shoelace formula with lat/lon-to-metres conversion.
-
-        Parameters:
-            corners: List of [lat, lon] pairs forming the polygon
-
-        Returns:
-            Approximate area in square metres
-        """
-        if corners is None or len(corners) < 3:
-            return 0.0
-
-        R = self._config.earth_radius_m
-
-        # Convert to radians
-        lat_rad = [math.radians(c[0]) for c in corners]
-        lon_rad = [math.radians(c[1]) for c in corners]
-
-        # Average latitude for scale factor
-        avg_lat = sum(lat_rad) / len(lat_rad)
-        cos_avg_lat = math.cos(avg_lat)
-
-        # Convert to local ENU coordinates (metres) relative to first corner
-        # Note: lat_rad and lon_rad are already in radians, so no need for π/180 conversion
-        enu = []
-        for lr, lor in zip(lat_rad, lon_rad):
-            e = R * (lor - lon_rad[0]) * cos_avg_lat  # east in metres
-            n = R * (lr - lat_rad[0])  # north in metres
-            enu.append((e, n))
-
-        # Shoelace formula for area
-        n_pts = len(enu)
-        area = 0.0
-        for i in range(n_pts):
-            j = (i + 1) % n_pts
-            area += enu[i][0] * enu[j][1]
-            area -= enu[j][0] * enu[i][1]
-
-        return abs(area) / 2.0
+        """Calculate area using the centralized geo_math engine."""
+        from core.geo_math import footprint_area
+        return footprint_area(corners)
 
     @staticmethod
     def _is_valid_position(lat, lon):

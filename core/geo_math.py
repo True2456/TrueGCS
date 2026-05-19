@@ -183,21 +183,16 @@ def calculate_footprint(
             [front-left, front-right, rear-right, rear-left]
         Or None if the calculation fails (e.g., camera pointing above ground).
     """
-    # Build rotation matrix from body frame to NED earth frame.
-    # Order: yaw (about Z), pitch (about Y), roll (about X)
-    R_body_to_earth = _mat_mul(_rot_z(yaw), _mat_mul(_rot_y(pitch), _rot_x(roll)))
+    # TACTICAL ADJUSTMENT: For stabilized gimbals (DJI/Ardu), gimbal_pitch 
+    # is usually absolute (relative to horizon). We only apply drone YAW.
+    # If using a fixed camera, you would use R_body_to_earth.
+    R_yaw_only = _rot_z(yaw)
+    
+    # Combined rotation: Start with gimbal pitch relative to horizon, then apply drone heading
+    R_cam_to_earth = _mat_mul(R_yaw_only, _rot_y(gimbal_pitch))
 
-    # Camera optical axis in body frame: +X direction = [1, 0, 0]
-    # Apply gimbal pitch (rotation about body Y axis)
-    R_gimbal_pitch = _rot_y(gimbal_pitch)
-
-    # Combined rotation: body to earth, then gimbal
-    # Camera direction in body frame after gimbal:
-    cam_body = _mat_vec_mul(R_gimbal_pitch, [1.0, 0.0, 0.0])
-    # Then transform to earth NED frame:
-    cam_earth = _mat_vec_mul(R_body_to_earth, cam_body)
-
-    # Normalize
+    # Camera optical axis is +X in its own frame
+    cam_earth = _mat_vec_mul(R_cam_to_earth, [1.0, 0.0, 0.0])
     cam_earth = _normalize(cam_earth)
 
     # In NED: cam_earth[2] > 0 means pointing downward
@@ -241,11 +236,8 @@ def calculate_footprint(
         # Normalize in camera frame
         d_cam = _normalize(d_cam)
 
-        # Apply gimbal pitch rotation about Y
-        d_after_gimbal = _mat_vec_mul(R_gimbal_pitch, d_cam)
-
-        # Transform to earth NED frame
-        d_earth = _mat_vec_mul(R_body_to_earth, d_after_gimbal)
+        # Transform directly to earth NED frame using absolute camera orientation
+        d_earth = _mat_vec_mul(R_cam_to_earth, d_cam)
 
         # Normalize
         d_earth = _normalize(d_earth)

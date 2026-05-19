@@ -758,6 +758,9 @@ class VideoThread(QThread):
                 
                 # UNWRAP: Separating raw image from high-res pulse timestamp 🚀
                 frame, frame_ts = raw_frame
+                if frame is None or frame.size == 0:
+                    continue
+                    
                 self.frame_history.append((frame_ts, frame))
 
                 # 1. Spawn Truly Asynchronous Mission Loader (Prevents Stutters! 🏎️)
