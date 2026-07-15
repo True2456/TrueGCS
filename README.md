@@ -1,162 +1,150 @@
-# TrueGCS — Hardened ISR Ground Control Station
+# TrueGCS
 
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-![PySide6](https://img.shields.io/badge/Qt-41CD52?style=for-the-badge&logo=qt&logoColor=white)
-![YOLOv8](https://img.shields.io/badge/YOLOv8-00A9E0?style=for-the-badge&logo=ultralytics&logoColor=white)
-![MAVLink](https://img.shields.io/badge/MAVLink-2.0-blue?style=for-the-badge)
-![DJI](https://img.shields.io/badge/DJI-SDK_V5-black?style=for-the-badge&logo=dji&logoColor=white)
+Ground control station for MAVLink aircraft and DJI airframes (Mobile SDK v5 via companion Android bridge). Desktop client is Python / PySide6.
 
-> A professional-grade, high-security multi-drone Ground Control Station.  
-> Built on MAVLink, PySide6, and the **Cython-Hardened** TrueGCS Core.
+Supports multi-vehicle control over concurrent MAVLink links, live video with optional onboard object detection, gimbal slew from track error, map and 3D (Cesium) views, waypoint missions, and optional station-to-station telemetry sync.
 
 ---
 
-## 🛡️ High-Security Architecture
+## Screenshots
 
-TrueGCS is designed for sensitive ISR operations where code integrity and model protection are paramount.
-
-- **Cython Shield**: Core logic (`core/`, `telemetry/`, `video/`) is compiled into machine-code binaries (`.so`/`.pyd`) during build. This prevents reverse engineering and ensures near-native execution performance.
-- **TrueShield™ Model Protection**: AI weights are protected with AES-256 encryption. Models are only decrypted in volatile memory or hidden temporary structures, never stored as plain `.pt` files in production builds.
-- **Bundle-Aware Security**: Fully compatible with macOS `.app` and Windows `.exe` distributions. Uses a secure path-resolution system (`sys._MEIPASS`) for internal resource integrity.
-
----
-
-## 🚁 DJI Native Support (New)
-
-TrueGCS now supports **SDK V5 compatible DJI drones** via the **TrueGCS-DJI (Android App)**. This allows tactical ISR features (AI tracking, hardened telemetry) to be used with standard DJI hardware.
-
-- **Bidirectional MAVLink Translation**: Translates GCS Mount Control commands to DJI SDK speed/angle rotations.
-- **High-Frequency Feedback**: 10Hz attitude and GPS telemetry streaming from the drone to the GCS.
-- **Rate-Based Gimbal Tracking**: Utilizes a precision P-controller to eliminate mechanical overshoot during AI target acquisition.
-
----
-
-## ## Screenshots
-
-| Swarm Simulation | Simulation Controller |
+| Multi-vehicle simulation | Simulation controls |
 |:-:|:-:|
-| ![Swarm Simulation](docs/screenshots/Swarm%20simulation%20control.png) | ![Simulation Controller](docs/screenshots/Simulation%20controller.png) |
+| ![Multi-vehicle simulation](docs/screenshots/Swarm%20simulation%20control.png) | ![Simulation controls](docs/screenshots/Simulation%20controller.png) |
 
-| AI Tracking Config | Configuration Tab |
+| Detection / tracking settings | Vehicle parameters |
 |:-:|:-:|
-| ![AI Tracking](docs/screenshots/AI%20Tracking%20config.png) | ![Config](docs/screenshots/Config%20settings.png) |
+| ![Detection settings](docs/screenshots/AI%20Tracking%20config.png) | ![Parameters](docs/screenshots/Config%20settings.png) |
 
 ---
 
-## ✨ Features
+## Capabilities
 
-### 📡 Tactical Operations
-- **Low-Latency Video Engine**: Optimized DJI RTMP-to-UDP relay with `threads=1` single-threaded decoding to eliminate frame-reordering lag.
-- **High-Res Map Engine**: Leaflet-based map utilizing **Esri World Imagery** with native zoom support up to level 19 for pin-sharp reconnaissance.
-- **Multi-Drone Command**: Unlimited concurrent MAVLink links with auto-discovery and color-coded telemetry streams.
-- **Mission Planner**: Tactical waypoint placement with per-point altitude and speed control.
-- **HUD Overlay**: Speed, Altitude, Battery, Mode, EKF status, Lidar range, and high-frequency sensor diagnostics.
+### Flight and telemetry
+- Concurrent MAVLink connections (UDP / serial) with per-system-id discovery
+- Mode, arm state, attitude, position, battery, and HUD overlays
+- Waypoint upload and mission start; per-waypoint altitude and speed
+- Camera ground footprint projection on the map and Cesium globe
+- Offline map tiles (Esri World Imagery; optional regional pre-download)
 
-### 🎥 AI Reconnaissance
-- **YOLO26 ISR Models**: Custom-trained weights optimized for aerial vehicle and person detection (VisDrone-v2).
-- **Monotonic Sync**: Advanced frame-matching logic that synchronizes AI detection overlays with live video feeds at a tactical 50ms offset.
-- **Gimbal Tracking**: PID-based target locking with support for `DO_MOUNT_CONTROL` MAVLink commands.
-- **Click-to-track**: Nearest detection, pixel seed, or centre slew modes for rapid target acquisition.
+### Video and payload
+- UDP / USB capture via GStreamer; RTMP-to-UDP path for DJI downlinks
+- YOLO-based detection overlays with configurable confidence and class filters
+- Track modes (nearest detection, pixel seed, center slew) driving `MAV_CMD_DO_MOUNT_CONTROL`
+- Detection-to-display timing offset (~50 ms) to reduce overlay lag
 
-### 🛩️ Simulation
-- Built-in **VTOL SITL simulator** with multi-instance support.
-- Launch multiple drones concurrently from the UI for swarm training.
-- Simulates: GPS denial, VTOL transitions, and complex mission fail-safes.
+### DJI (SDK v5)
+Requires the TrueGCS-DJI Android companion app:
+- Bridges DJI telemetry into MAVLink for the desktop GCS
+- Maps mount-control commands to DJI gimbal rate / angle APIs
+- Attitude and GNSS reported at up to 10 Hz over the bridge
+
+### Simulation
+- Built-in VTOL and multirotor SITL-style sims for bench testing
+- Multi-instance launch from the UI
+- GPS denial and VTOL transition scenarios for failsafe / mode checks
+
+### Multi-operator sync (optional)
+Under **Config → Peer GCS Sync** (off by default):
+- Two (or more) TrueGCS instances share a Socket.IO relay (`GCSManager`)
+- Independent transmit / receive of telemetry; optional video share
+- Remote command / mission ingest disabled unless explicitly enabled
+- Optional shared secret; relay defaults to `127.0.0.1:3001`
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TD
-    subgraph "External Management"
-        I["Brain / OpenClaw Server"]
+    subgraph Operators
+        PeerRelay["Peer sync relay / GCSManager"]
     end
 
-    subgraph "TrueGCS (GCS)"
-        A[main.py] --> B[Telemetry Thread]
-        A --> C[Video Thread]
-        A --> J["ConnectionManager / BrainClient"]
-        C --> D[YOLOv8 Inference]
-        C --> E[PID Gimbal Controller]
+    subgraph TrueGCS
+        Main[main.py]
+        Tel[Telemetry thread]
+        Vid[Video thread]
+        Peer[Peer sync client]
+        Main --> Tel
+        Main --> Vid
+        Main --> Peer
+        Vid --> Det[Object detection]
+        Vid --> Gimbal[Mount tracker]
     end
 
-    subgraph "RC Link (ELRS)"
-        K["RC Remotes / ELRS Backpacks"]
+    subgraph Links
+        ELRS["RC / ExpressLRS"]
     end
 
-    subgraph "TrueGCS-DJI (Android App)"
-        F[StreamingManager]
-        G["DJI SDK V5"]
+    subgraph TrueGCS_DJI["TrueGCS-DJI Android"]
+        Bridge[Streaming / MAVLink bridge]
+        SDK[DJI Mobile SDK v5]
     end
 
-    subgraph "Hardware"
-        H["Any DJI Drone (SDK V5)"]
-        L[Custom Quadcopter]
-        M[VTOL Platform]
+    subgraph Airframes
+        DJI[DJI aircraft]
+        Quad[Multirotor]
+        VTOL[VTOL]
     end
 
-    J <-- "Socket.io (Stealth Telemetry & Commands)" --> I
-    B <-- "MAVLink over UDP" --> F
-    B <-- "MAVLink over Wifi/UDP" --> K
-    K <-- "ExpressLRS Link" --> L
-    K <-- "ExpressLRS Link" --> M
-    E -- "Mount Control Commands" --> F
-    F <-- "DJI SDK Protocols" --> G
-    G <-- "Link" --> H
-    H -- "Video/Attitude/GPS" --> G
+    Peer <-->|Socket.IO| PeerRelay
+    Tel <-->|MAVLink UDP| Bridge
+    Tel <-->|MAVLink UDP / serial| ELRS
+    ELRS --> Quad
+    ELRS --> VTOL
+    Gimbal -->|DO_MOUNT_CONTROL| Bridge
+    Bridge <--> SDK
+    SDK <--> DJI
 ```
 
 ```text
 TrueGCS/
-├── main.py                  # Desktop entry / signal wiring
-├── core/
-│   ├── shield.py            # TrueShield model encryption helpers
-│   ├── fleet_config.py      # Station identity, peer sync, AI safety settings
-│   ├── brain_client.py      # Optional peer-GCS Socket.IO client
-│   ├── fleet_brain_observer.py
-│   ├── utils.py             # Binary locator (FFmpeg/GStreamer)
-│   └── tile_cache.py        # Offline tile server & CDN fallback
-├── telemetry/               # MAVLink node logic (Cython-optional in builds)
-├── video/                   # AI inference & GStreamer pipeline
-├── gimbal/                  # Mount tracking controller
-├── GCSManager/              # Optional peer-sync relay (bind 127.0.0.1 by default)
-├── ui/                      # PySide6 interface (includes Peer GCS Sync settings)
-└── models/                  # AI weights (.tsm / .tflite)
+├── main.py              # Application entry and signal routing
+├── core/                # Config, peer sync, geolocation, model crypto helpers
+├── telemetry/           # MAVLink I/O thread
+├── video/               # Capture and inference pipeline
+├── gimbal/              # Mount track controller
+├── GCSManager/          # Optional peer-sync relay (Node.js)
+├── ui/                  # PySide6 UI
+├── simulation/          # VTOL / multirotor sims
+└── models/              # Detector weights (.tsm / .tflite)
 ```
 
-### Peer GCS Sync
-Opt-in under **Config → Peer GCS Sync**. Both stations point at the same `GCSManager` relay URL (and shared secret). Transmit/receive telemetry independently; remote command execution is off by default.
----
-
-## 🚀 Performance Tuning
-
-TrueGCS is pre-tuned for zero-lag performance:
-- **Relay**: `-probesize 32 -analyzeduration 0` for instant stream start.
-- **Decoder**: `-fflags nobuffer -flags low_delay` for real-time situational awareness.
-- **Map**: Local Tile Server fallback for offline "Grid-Down" operations.
+Release builds may Cython-compile selected `core/` and `telemetry/` modules. Detector weights can be stored encrypted (`.tsm`); set `TRUEGCS_SHIELD_PASSPHRASE` when using shielded models. Cesium Ion token: UI dialog or `CESIUM_ION_TOKEN`.
 
 ---
 
-## ⚙️ Requirements
+## Video pipeline notes
 
-| Dependency | Version |
-|---|---|
-| Python | ≥ 3.10 |
-| PySide6 | ≥ 6.5.0 |
-| pymavlink | ≥ 2.4.40 |
-| opencv-python | ≥ 4.8.0 |
-| ultralytics | ≥ 8.0.0 |
-| Cython | ≥ 3.0.0 |
-| cryptography | ≥ 41.0.0 |
+Typical low-latency flags used on the relay / demux path:
+- Probe / analyze: `-probesize 32 -analyzeduration 0`
+- Demux / decode: `-fflags nobuffer -flags low_delay`
+
+Map view falls back to a local tile cache when the network is unavailable.
 
 ---
 
-## ⚖️ License
+## Requirements
+
+| Dependency     | Version   |
+|----------------|-----------|
+| Python         | ≥ 3.10    |
+| PySide6        | ≥ 6.5.0   |
+| pymavlink      | ≥ 2.4.40  |
+| opencv-python  | ≥ 4.8.0   |
+| ultralytics    | ≥ 8.0.0   |
+| Cython         | ≥ 3.0.0   |
+| cryptography   | ≥ 41.0.0  |
+
+See `requirements.txt` for the full list. Peer sync relay needs Node.js (`GCSManager/`).
+
+---
+
+## License
 
 Copyright (c) 2025 True2456. All rights reserved.
 
-This software is provided for personal, non-commercial, and evaluation use only.  
-**High-Security Release**: Commercial use, redistribution, or decompilation is strictly prohibited without prior written permission from the copyright holder.
+Personal, non-commercial, and evaluation use only. Commercial use, redistribution, or reverse engineering without written permission is prohibited.
 
 See [LICENSE](LICENSE) for full terms.
