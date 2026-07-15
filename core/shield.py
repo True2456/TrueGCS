@@ -24,8 +24,16 @@ class TrueShield:
         )
         return base64.urlsafe_b64encode(kdf.derive(passphrase.encode()))
 
-    def __init__(self, key_passphrase: str = "TrueGCS_Tactical_Alpha_2026"):
-        key = self.generate_key(key_passphrase)
+    def __init__(self, key_passphrase: str = None):
+        passphrase = key_passphrase or os.environ.get("TRUEGCS_SHIELD_PASSPHRASE")
+        if not passphrase:
+            # Legacy fallback keeps existing .tsm assets loadable; set env to own the key.
+            print(
+                "TrueShield WARNING: TRUEGCS_SHIELD_PASSPHRASE unset — "
+                "using legacy build passphrase. Set the env var and re-encrypt models."
+            )
+            passphrase = "TrueGCS_Tactical_Alpha_2026"
+        key = self.generate_key(passphrase)
         self.fernet = Fernet(key)
 
     def encrypt_file(self, input_path: str, output_path: str):

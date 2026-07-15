@@ -19,6 +19,9 @@ cache/
 *.log
 gcs_crash.log
 crash.log
+converter/venv/
+GCSManager/brain.log
+GCSManager/node_modules/
 
 # AI Weights / Models (Encrypted .tsm allowed for builds)
 *.pt

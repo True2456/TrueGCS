@@ -19,7 +19,7 @@ else:
     # If running in development mode
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from ui.main_window import GCSMainWindow
 from video.video_thread import VideoThread
 from telemetry.mavlink_thread import TelemetryThread
@@ -27,6 +27,7 @@ from PySide6.QtCore import QTimer, QObject, Signal, QFileSystemWatcher
 from gimbal.mount_tracker import MountTrackerController, MountTrackerConfig
 from core.fleet_brain_observer import FleetBrainObserver
 from core.camera_footprint_manager import CameraFootprintManager, CameraFootprintConfig
+from core.fleet_config import get_ai_safety
 
 class LogSignaler(QObject):
     log_ready = Signal(str)
@@ -111,6 +112,22 @@ def main():
     # ---- GLOBAL NODE MANAGER ----
     window.telemetry_nodes = {}
     window.fleet_observer = FleetBrainObserver(window)
+    window.fleet_observer.status_changed.connect(window.tab_cfg.set_peer_sync_status)
+    window._ai_safety = get_ai_safety()
+    window.bridge_timer = QTimer()
+    window.bridge_timer.setInterval(500)
+
+    def on_peer_sync_apply(peer, safety):
+        window.fleet_observer.apply_and_save(peer, safety)
+        window._ai_safety = safety
+        if safety.get("enable_remote_pilot_bridge"):
+            if not window.bridge_timer.isActive():
+                window.bridge_timer.start()
+        else:
+            window.bridge_timer.stop()
+
+    window.tab_cfg.peer_sync_apply_requested.connect(on_peer_sync_apply)
+    window.fleet_observer.start_from_config()
     window.drone_headings = {}
     window.drone_armed = {} # { "nid:sid": bool } 🛰️
     node_colors = ['#00ddff', '#ff3366', '#33ff55', '#ffaa00', '#aa00ff', '#ffffff']
@@ -429,9 +446,8 @@ def main():
             nid, sid = map(int, target_id.split(":"))
             if nid in window.telemetry_nodes:
                 tel = window.telemetry_nodes[nid]
-                print(f"Mission: Executing AUTO-ARM and TAKEOFF for Drone {sid}")
-                tel.arm(sid, True)
-                time.sleep(0.1)
+                print(f"Mission: Executing TAKEOFF for Drone {sid}")
+                # send_takeoff sequences mode/arm/NAV_TAKEOFF on a worker thread
                 tel.send_takeoff(sid, alt=50.0)
                 window.lbl_status.setText(f"Mission: Initiating Takeoff (50m) for Drone {sid}...")
                 window.lbl_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
@@ -576,7 +592,9 @@ def main():
                 # Default to UDP Stream
                 src = f"udp://{host or '0.0.0.0'}:{vport or '5008'}"
             
-            brain_client = window.fleet_observer.brain if hasattr(window, "fleet_observer") else None
+            brain_client = None
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain:
+                brain_client = window.fleet_observer.brain
             window.video_thread = VideoThread(stream_url=src, brain_client=brain_client)
             window.video_thread.gst_path = find_gstreamer()
             window.tab_ops.video_label.video_thread = window.video_thread
@@ -610,13 +628,9 @@ def main():
             window.video_thread.set_tracking_mode(window.tab_ops.combo_tracking_mode.currentData())
             window.mount_tracker.set_enabled(window.tab_ops.chk_tracking.isChecked() and window.tab_ops.combo_tracking_mode.currentData() != "none")
             window.tab_ops.btn_vid_toggle.setText("Stop Video")
-            # Notify Brain: video stream is now active 🛰️
-            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
-                window.fleet_observer.brain.sio.emit("video:status", {
-                    "station_id": window.fleet_observer.brain.station_name,
-                    "active": True,
-                    "source": src
-                })
+            # Notify peers: video stream is now active
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain:
+                window.fleet_observer.brain.emit_video_status(True, src)
         else:
             if window.video_thread:
                 window.video_thread.stop()
@@ -626,13 +640,9 @@ def main():
             window.mount_tracker.set_enabled(False)
             window.tab_ops.btn_vid_toggle.setText("Start Video")
             window.tab_ops.video_label.clear()
-            # Notify Brain: video stream is now inactive 🛰️
-            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
-                window.fleet_observer.brain.sio.emit("video:status", {
-                    "station_id": window.fleet_observer.brain.station_name,
-                    "active": False,
-                    "source": None
-                })
+            # Notify peers: video stream is now inactive
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain:
+                window.fleet_observer.brain.emit_video_status(False, None)
 
     def on_tracking_error(err_x, err_y):
         if not window.video_thread:
@@ -939,9 +949,7 @@ def main():
         nid, sid = parse_target(target_id)
         tel = window.telemetry_nodes.get(nid)
         if tel:
-            print(f"Mission: Executing AUTO-ARM and TAKEOFF for Drone {sid}")
-            tel.arm(sid, True)
-            time.sleep(0.1)
+            print(f"Mission: Executing TAKEOFF for Drone {sid}")
             tel.send_takeoff(sid, 50.0)
 
     def on_start_mission(target_id):
@@ -992,11 +1000,32 @@ def main():
         if not commands:
             # If reasoning was returned with no commands, it's a valid analysis response (e.g. /identify)
             if reasoning:
-                window.tab_ops.ai_panel.append_chat("<i>[System] ✅ ISR Analysis complete.</i>", "#00ff78")
+                window.tab_ops.ai_panel.append_chat("<i>[System] ISR Analysis complete.</i>", "#00ff78")
             else:
                 window.tab_ops.ai_panel.append_chat("<i>[System] No actionable commands extracted from response.</i>", "#ffaa00")
             window.tab_ops.ai_panel.unlock_input()
             return
+
+        KINETIC = {"takeoff", "auto", "mission", "rtl", "land"}
+        kinetic_cmds = [c for c in commands if c.get("action") in KINETIC]
+        safety = getattr(window, "_ai_safety", None) or get_ai_safety()
+        if kinetic_cmds and safety.get("require_command_confirm", True):
+            summary = ", ".join(
+                f"{c.get('action')}→{c.get('target_id', '?')}" for c in kinetic_cmds
+            )
+            reply = QMessageBox.question(
+                window,
+                "Confirm AI Flight Commands",
+                f"AI proposed flight actions:\n\n{summary}\n\nExecute now?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                window.tab_ops.ai_panel.append_chat(
+                    "<i>[System] Operator rejected AI flight commands.</i>", "#ffaa00"
+                )
+                window.tab_ops.ai_panel.unlock_input()
+                return
 
         for cmd in commands:
             action = cmd.get("action")
@@ -1010,8 +1039,6 @@ def main():
                 
             if action == "takeoff":
                 alt = float(cmd.get("altitude", 50.0))
-                tel.arm(sid, True)
-                time.sleep(0.1)
                 tel.send_takeoff(sid, alt)
                 window.lbl_status.setText(f"AI: Initiating Takeoff ({alt}m) for Drone {sid}")
                 
@@ -1054,7 +1081,7 @@ def main():
                             )
                     else:
                         window.tab_ops.ai_panel.append_chat(
-                            "<b>[GEOLOCATION]</b> ⚠️ No drone GPS/telemetry available. "
+                            "<b>[GEOLOCATION]</b> No drone GPS/telemetry available. "
                             "Connect a MAVLink drone or ensure the DJI telemetry bridge is active.",
                             "#ffaa00"
                         )
@@ -1177,31 +1204,30 @@ def main():
     llm_client.response_received.connect(handle_llm_response)
     llm_client.error_received.connect(lambda e: (window.tab_ops.ai_panel.append_chat(f"<b>[SYSTEM ERROR]</b> {e}", "#ff3366"), window.tab_ops.ai_panel.unlock_input()))
 
-    # --- TACTICAL REMOTE BRIDGE ---
-    # This allows the AI agent to "type" into the GCS for live testing.
+    # --- OPTIONAL REMOTE PILOT BRIDGE (dev) ---
+    # Disabled by default; enable in Config → Peer GCS Sync → AI / Remote Safety.
     remote_cmd_path = os.path.join(os.getcwd(), "remote_pilot.cmd")
-    # Ensure file exists
-    if not os.path.exists(remote_cmd_path):
-        with open(remote_cmd_path, "w") as f: f.write("")
-    
+
     def check_remote_bridge():
+        safety = getattr(window, "_ai_safety", None) or get_ai_safety()
+        if not safety.get("enable_remote_pilot_bridge"):
+            return
         try:
             if os.path.exists(remote_cmd_path) and os.path.getsize(remote_cmd_path) > 0:
                 with open(remote_cmd_path, "r") as f:
                     cmd_text = f.read().strip()
                 if cmd_text:
                     print(f"[REMOTE BRIDGE] Executing: {cmd_text}")
-                    # Clear the file
-                    with open(remote_cmd_path, "w") as f: f.write("")
-                    # Inject into the UI
+                    with open(remote_cmd_path, "w") as f:
+                        f.write("")
                     window.tab_ops.ai_panel.input_field.setText(cmd_text)
                     window.tab_ops.ai_panel.submit_prompt()
         except Exception as e:
             print(f"[REMOTE BRIDGE] Error: {e}")
 
-    window.bridge_timer = QTimer()
     window.bridge_timer.timeout.connect(check_remote_bridge)
-    window.bridge_timer.start(500) # Poll every 0.5s 🛰️
+    if window._ai_safety.get("enable_remote_pilot_bridge"):
+        window.bridge_timer.start()
     # -----------------------------
     
     # Auto-fetch models on startup
@@ -1233,12 +1259,10 @@ def main():
     window.tab_cfg.metadata.fetch_latest()
     orig_close = window.closeEvent
     def _on_close(event):
-        # Notify Brain this station is going offline 🛰️
+        # Notify peer relay this station is going offline
         try:
-            if hasattr(window, "fleet_observer") and window.fleet_observer.brain.connected:
-                window.fleet_observer.brain.sio.emit(
-                    "station:remove", window.fleet_observer.brain.station_name
-                )
+            if hasattr(window, "fleet_observer") and window.fleet_observer.brain:
+                window.fleet_observer.disconnect_peer()
         except Exception:
             pass
         for n in window.telemetry_nodes.values():

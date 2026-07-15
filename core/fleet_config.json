@@ -1,5 +1,19 @@
 {
-    "station_id": "truegcs-delta-tactical-field",
-    "station_name": "GCS-DELTA-FIELD",
-    "cesium_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI2NDllNjYwNC03ZTJiLTRjNWYtYTYyZS0zMjY4MWY4MThhMGUiLCJpZCI6NDI2MzUxLCJpc3MiOiJodHRwczovL2lvbi5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3Nzc3MDIwNDd9.yosiWeoQtDmh0N-sSm-FV5dmgN80KwFb_1g23lAydiA"
+    "station_id": "truegcs-local",
+    "station_name": "TrueGCS-Local",
+    "cesium_token": "",
+    "peer_sync": {
+        "enabled": false,
+        "server_url": "http://127.0.0.1:3001",
+        "transmit_telemetry": true,
+        "transmit_video": false,
+        "receive_peer_telemetry": true,
+        "accept_remote_commands": false,
+        "shared_secret": "",
+        "station_display_name": ""
+    },
+    "ai_safety": {
+        "require_command_confirm": true,
+        "enable_remote_pilot_bridge": false
+    }
 }

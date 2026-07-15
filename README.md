@@ -109,20 +109,24 @@ graph TD
 
 ```text
 TrueGCS/
-├── main.py                  # Secure entry point (Bundle-Aware)
+├── main.py                  # Desktop entry / signal wiring
 ├── core/
-│   ├── shield.py            # TrueShield™ Encryption/Decryption Layer
-│   ├── brain_client.py      # Secure Socket.io Link to OpenClaw Brain
-│   ├── connection_manager.py # Automated Command/Telemetry Routing
-│   ├── utils.py             # Robust Binary Locator (FFmpeg/GStreamer)
-│   └── tile_cache.py        # Offline Tile Server & CDN Fallback
-├── telemetry/               # [Cython Compiled] MAVLink Node Logic
-├── video/                   # [Cython Compiled] AI Inference & GStreamer Pipeline
-├── gimbal/                  # PID-based Mount Tracking
-├── ui/                      # Professional PySide6 Dark-Mode Interface
-└── models/                  # Shielded AI Weights (.tsm format)
+│   ├── shield.py            # TrueShield model encryption helpers
+│   ├── fleet_config.py      # Station identity, peer sync, AI safety settings
+│   ├── brain_client.py      # Optional peer-GCS Socket.IO client
+│   ├── fleet_brain_observer.py
+│   ├── utils.py             # Binary locator (FFmpeg/GStreamer)
+│   └── tile_cache.py        # Offline tile server & CDN fallback
+├── telemetry/               # MAVLink node logic (Cython-optional in builds)
+├── video/                   # AI inference & GStreamer pipeline
+├── gimbal/                  # Mount tracking controller
+├── GCSManager/              # Optional peer-sync relay (bind 127.0.0.1 by default)
+├── ui/                      # PySide6 interface (includes Peer GCS Sync settings)
+└── models/                  # AI weights (.tsm / .tflite)
 ```
 
+### Peer GCS Sync
+Opt-in under **Config → Peer GCS Sync**. Both stations point at the same `GCSManager` relay URL (and shared secret). Transmit/receive telemetry independently; remote command execution is off by default.
 ---
 
 ## 🚀 Performance Tuning

@@ -1,13 +1,12 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
                              QPushButton, QLineEdit, QComboBox, QScrollArea, QFrame, 
                              QTabWidget, QProgressBar, QGroupBox, QTableWidget, 
-                             QTableWidgetItem, QHeaderView)
+                             QTableWidgetItem, QHeaderView, QCheckBox)
 from PySide6.QtCore import Qt, Signal, QThread
 from core.tile_cache import TileCacheDownloader, NSW_BOUNDS
 from core.param_metadata import ParamMetadataProvider
+from core.fleet_config import load_fleet_config, get_peer_sync, get_ai_safety
 from ui.widgets.param_widgets import EnumSelector, BitmaskSelector
-
-from PySide6.QtCore import Qt, Signal, QThread
 
 class TileDownloadThread(QThread):
     progress = Signal(int, int) # Current, Total
@@ -33,6 +32,7 @@ class CfgTab(QWidget):
     # Local controller signals
     pitch_gains_changed = Signal(float, float, float)
     yaw_gains_changed = Signal(float, float, float)
+    peer_sync_apply_requested = Signal(dict, dict)  # peer_sync, ai_safety
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +44,7 @@ class CfgTab(QWidget):
         
         self.lbl_status = None # Assigned by external controller if needed
         self.setup_ui()
+        self.load_peer_sync_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -205,6 +206,77 @@ class CfgTab(QWidget):
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_map), "Map Tools")
         self.cfg_tabs.addTab(self.wrap_in_scroll(tab_gt), "Gimbal Tuning")
         
+        # Peer GCS Sync (transmit / receive via Fleet Brain relay)
+        tab_peer = QWidget()
+        peer_lay = QVBoxLayout(tab_peer)
+        peer_lay.setAlignment(Qt.AlignTop)
+
+        peer_box = QGroupBox("Peer GCS Sync")
+        peer_grid = QGridLayout(peer_box)
+
+        self.chk_peer_enabled = QCheckBox("Enable peer sync (connect to Fleet Brain relay)")
+        peer_grid.addWidget(self.chk_peer_enabled, 0, 0, 1, 2)
+
+        peer_grid.addWidget(QLabel("Relay URL:"), 1, 0)
+        self.txt_peer_url = QLineEdit("http://127.0.0.1:3001")
+        self.txt_peer_url.setPlaceholderText("http://127.0.0.1:3001")
+        peer_grid.addWidget(self.txt_peer_url, 1, 1)
+
+        peer_grid.addWidget(QLabel("Shared secret:"), 2, 0)
+        self.txt_peer_secret = QLineEdit()
+        self.txt_peer_secret.setEchoMode(QLineEdit.Password)
+        self.txt_peer_secret.setPlaceholderText("Must match GCS_PEER_SYNC_SECRET on relay")
+        peer_grid.addWidget(self.txt_peer_secret, 2, 1)
+
+        peer_grid.addWidget(QLabel("Station name:"), 3, 0)
+        self.txt_peer_station = QLineEdit()
+        self.txt_peer_station.setPlaceholderText("Shown to peer GCS operators")
+        peer_grid.addWidget(self.txt_peer_station, 3, 1)
+
+        self.chk_peer_tx_telem = QCheckBox("Transmit local telemetry to peers")
+        self.chk_peer_tx_telem.setChecked(True)
+        peer_grid.addWidget(self.chk_peer_tx_telem, 4, 0, 1, 2)
+
+        self.chk_peer_tx_video = QCheckBox("Transmit video frames to peers (bandwidth heavy)")
+        peer_grid.addWidget(self.chk_peer_tx_video, 5, 0, 1, 2)
+
+        self.chk_peer_rx_telem = QCheckBox("Receive peer telemetry (plot on map)")
+        self.chk_peer_rx_telem.setChecked(True)
+        peer_grid.addWidget(self.chk_peer_rx_telem, 6, 0, 1, 2)
+
+        self.chk_peer_accept_cmds = QCheckBox("Accept remote commands / missions from peers")
+        self.chk_peer_accept_cmds.setStyleSheet("color: #ffaa00;")
+        peer_grid.addWidget(self.chk_peer_accept_cmds, 7, 0, 1, 2)
+
+        peer_hint = QLabel(
+            "Run GCSManager (`node server.js`) on a shared host. Both GCS instances "
+            "point at the same relay URL + secret to exchange fleet state."
+        )
+        peer_hint.setWordWrap(True)
+        peer_hint.setStyleSheet("color: #557788; font-size: 11px;")
+        peer_grid.addWidget(peer_hint, 8, 0, 1, 2)
+
+        self.lbl_peer_status = QLabel("Status: offline")
+        self.lbl_peer_status.setStyleSheet("color: #92b0c3;")
+        peer_grid.addWidget(self.lbl_peer_status, 9, 0, 1, 2)
+
+        btn_peer_apply = QPushButton("Apply Peer Sync Settings")
+        btn_peer_apply.clicked.connect(self._emit_peer_sync)
+        peer_grid.addWidget(btn_peer_apply, 10, 0, 1, 2)
+
+        peer_lay.addWidget(peer_box)
+
+        safety_box = QGroupBox("AI / Remote Safety")
+        safety_grid = QGridLayout(safety_box)
+        self.chk_ai_confirm = QCheckBox("Require operator confirm before executing LLM flight commands")
+        self.chk_ai_confirm.setChecked(True)
+        safety_grid.addWidget(self.chk_ai_confirm, 0, 0)
+        self.chk_remote_pilot = QCheckBox("Enable remote_pilot.cmd file bridge (dev only)")
+        safety_grid.addWidget(self.chk_remote_pilot, 1, 0)
+        peer_lay.addWidget(safety_box)
+
+        self.cfg_tabs.addTab(self.wrap_in_scroll(tab_peer), "Peer GCS Sync")
+        
         # AI Engine settings relocated to VideoTab
         
         # 7. Advanced / Full List Tab
@@ -262,6 +334,49 @@ class CfgTab(QWidget):
             d = float(self.txt_y_kd.text())
             self.yaw_gains_changed.emit(p, i, d)
         except ValueError: pass
+
+    def load_peer_sync_ui(self):
+        peer = get_peer_sync()
+        safety = get_ai_safety()
+        cfg = load_fleet_config()
+        self.chk_peer_enabled.setChecked(bool(peer.get("enabled")))
+        self.txt_peer_url.setText(peer.get("server_url") or "http://127.0.0.1:3001")
+        self.txt_peer_secret.setText(peer.get("shared_secret") or "")
+        self.txt_peer_station.setText(
+            peer.get("station_display_name") or cfg.get("station_name") or ""
+        )
+        self.chk_peer_tx_telem.setChecked(bool(peer.get("transmit_telemetry", True)))
+        self.chk_peer_tx_video.setChecked(bool(peer.get("transmit_video", False)))
+        self.chk_peer_rx_telem.setChecked(bool(peer.get("receive_peer_telemetry", True)))
+        self.chk_peer_accept_cmds.setChecked(bool(peer.get("accept_remote_commands", False)))
+        self.chk_ai_confirm.setChecked(bool(safety.get("require_command_confirm", True)))
+        self.chk_remote_pilot.setChecked(bool(safety.get("enable_remote_pilot_bridge", False)))
+
+    def collect_peer_sync_settings(self):
+        peer = {
+            "enabled": self.chk_peer_enabled.isChecked(),
+            "server_url": self.txt_peer_url.text().strip() or "http://127.0.0.1:3001",
+            "transmit_telemetry": self.chk_peer_tx_telem.isChecked(),
+            "transmit_video": self.chk_peer_tx_video.isChecked(),
+            "receive_peer_telemetry": self.chk_peer_rx_telem.isChecked(),
+            "accept_remote_commands": self.chk_peer_accept_cmds.isChecked(),
+            "shared_secret": self.txt_peer_secret.text(),
+            "station_display_name": self.txt_peer_station.text().strip(),
+        }
+        safety = {
+            "require_command_confirm": self.chk_ai_confirm.isChecked(),
+            "enable_remote_pilot_bridge": self.chk_remote_pilot.isChecked(),
+        }
+        return peer, safety
+
+    def _emit_peer_sync(self):
+        peer, safety = self.collect_peer_sync_settings()
+        self.peer_sync_apply_requested.emit(peer, safety)
+
+    def set_peer_sync_status(self, text: str):
+        if hasattr(self, "lbl_peer_status") and self.lbl_peer_status:
+            self.lbl_peer_status.setText(f"Status: {text}")
+
 
     # def _emit_ai_engine(self):
     #     engine = self.combo_ai_engine.currentText().split()[0]

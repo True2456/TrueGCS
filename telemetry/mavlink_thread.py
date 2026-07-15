@@ -186,31 +186,36 @@ class TelemetryThread(QThread):
                         is_armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
                         self._armed[sysid] = bool(is_armed)
                         self.signals.heartbeat_received.emit(self.node_id, sysid, bool(is_armed))
-                        
-                        flight_mode = getattr(self.master, 'flightmode', "UNKNOWN")
-                        if flight_mode == "UNKNOWN" or flight_mode == "":
-                            mapping = self.master.mode_mapping()
-                            if mapping:
-                                inv_map = {v: k for k, v in mapping.items()}
-                                flight_mode = inv_map.get(msg.custom_mode, "")
-                            
-                            # Standard ArduPilot Fallbacks (Plane/VTOL) 🛰️
-                            if not flight_mode:
-                                ardu_plane_map = {0:"MANUAL", 1:"CIRCLE", 2:"STABILIZE", 5:"FBWA", 10:"AUTO", 11:"RTL", 12:"LOITER", 13:"TAKEOFF", 14:"TRANSITION", 17:"QSTABILIZE", 18:"QHOVER", 19:"QLOITER"}
-                                flight_mode = ardu_plane_map.get(msg.custom_mode, f"MODE_{msg.custom_mode}")
 
-                        if hasattr(self.master, 'mode_mapping'):
-                            mapping = self.master.mode_mapping()
-                            if mapping and not self._modes_emitted[sysid]:
-                                self._modes_emitted[sysid] = True
-                                self.signals.modes_available.emit(self.node_id, sysid, list(mapping.keys()))
+                        # Per-sysid mode decode — never use connection-level flightmode on multiplexed links
+                        flight_mode = ""
+                        mapping = None
+                        try:
+                            mapping = self.master.mode_mapping() if self.master else None
+                        except Exception:
+                            mapping = None
+                        if mapping:
+                            inv_map = {v: k for k, v in mapping.items()}
+                            flight_mode = inv_map.get(msg.custom_mode, "")
 
-                        # Emit clean mode name 🛰️ (No prefix)
+                        if not flight_mode:
+                            ardu_plane_map = {
+                                0: "MANUAL", 1: "CIRCLE", 2: "STABILIZE", 5: "FBWA",
+                                10: "AUTO", 11: "RTL", 12: "LOITER", 13: "TAKEOFF",
+                                14: "TRANSITION", 15: "ACRO", 17: "QSTABILIZE",
+                                18: "QHOVER", 19: "QLOITER", 20: "QLAND", 21: "QRTL",
+                                22: "QAUTOTUNE", 23: "QACRO", 24: "THERMAL",
+                            }
+                            flight_mode = ardu_plane_map.get(msg.custom_mode, f"MODE_{msg.custom_mode}")
+
+                        if mapping and not self._modes_emitted[sysid]:
+                            self._modes_emitted[sysid] = True
+                            self.signals.modes_available.emit(self.node_id, sysid, list(mapping.keys()))
+
                         if flight_mode != self._last_mode[sysid]:
                             self._last_mode[sysid] = flight_mode
                             self.signals.hud_updated.emit(self.node_id, sysid, -1.0, -1.0, -1.0, flight_mode)
-                        
-                        # Emit armed status separately 🛰️
+
                         self.signals.armed_status_changed.emit(self.node_id, sysid, bool(is_armed))
 
                     elif msg_type == 'ATTITUDE':
@@ -303,18 +308,22 @@ class TelemetryThread(QThread):
         print(f"Telemetry [{self.node_id}]: {'ARM' if armed else 'DISARM'} command sent to SysID {target_sysid}")
         
     def set_gps_enabled(self, enabled, is_gps2=False):
-        """Custom command to toggle GPS simulation in SITL 🛰️"""
+        """Custom command to toggle GPS simulation in SITL."""
+        if not self.master:
+            print(f"Telemetry [{self.node_id}]: GPS toggle skipped — no MAVLink connection")
+            return
         # Command 31010: Custom GPS Toggle
         # Param1: GPS1 Status (1=On, 0=Off, -1=No Change)
         # Param2: GPS2 Status (1=On, 0=Off, -1=No Change)
         p1 = (1.0 if enabled else 0.0) if not is_gps2 else -1.0
         p2 = (1.0 if enabled else 0.0) if is_gps2 else -1.0
-        
-        self.master.mav.command_long_send(
-            self.master.target_system, self.master.target_component,
-            31010, 0, p1, p2, 0, 0, 0, 0, 0
-        )
-        print(f"Telemetry [{self.node_id}]: GPS {'ENABLE' if enabled else 'DISABLE'} command sent to SysID {self.master.target_system}")
+
+        with self.lock:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                31010, 0, p1, p2, 0, 0, 0, 0, 0
+            )
+        print(f"Telemetry [{self.node_id}]: GPS {'ENABLE' if enabled else 'DISABLE'} command sent")
 
     def set_waypoint(self, target_sysid, lat, lon, alt=50):
         if not self.master: return

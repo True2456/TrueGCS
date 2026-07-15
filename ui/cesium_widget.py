@@ -21,6 +21,9 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "core", "fleet_confi
 
 def _load_token():
     try:
+        token = os.environ.get("CESIUM_ION_TOKEN", "")
+        if token:
+            return token
         with open(CONFIG_PATH) as f:
             return json.load(f).get("cesium_token", "")
     except Exception:
